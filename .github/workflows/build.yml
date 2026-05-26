@@ -1,0 +1,71 @@
+name: Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          brew install python-tk@3.12
+          pip install bilibili-api-python pyinstaller
+
+      - name: Build
+        run: |
+          pyinstaller \
+            --onefile \
+            --windowed \
+            --name "NookLiveMonitor" \
+            --add-data "live_monitor_core.py:." \
+            --clean \
+            --noconfirm \
+            live_monitor_gui.py
+
+      - name: Package as ZIP
+        run: |
+          cd dist
+          zip -r NookLiveMonitor-mac.zip NookLiveMonitor.app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NookLiveMonitor-mac
+          path: dist/NookLiveMonitor-mac.zip
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install bilibili-api-python pyinstaller
+
+      - name: Build
+        run: |
+          pyinstaller `
+            --onefile `
+            --windowed `
+            --name "NookLiveMonitor" `
+            --add-data "live_monitor_core.py;." `
+            --clean `
+            --noconfirm `
+            live_monitor_gui.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NookLiveMonitor-windows
+          path: dist/NookLiveMonitor.exe

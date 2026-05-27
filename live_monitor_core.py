@@ -56,6 +56,8 @@ class LiveMonitor:
         self._last_likes = None
         self._offline_seconds = 0
         self._was_live = True
+        self._error_count = 0        # 连续错误计数，用于限流
+        self._last_error_time = None  # 上次报错时间
 
         # 回调钩子
         self.on_data = None      # (room_id, data_dict) -> None
@@ -75,8 +77,16 @@ class LiveMonitor:
             try:
                 info = await room.get_room_info()
             except Exception as e:
-                if self.on_error:
-                    self.on_error(self.room_id, str(e))
+                self._error_count += 1
+                now = datetime.now()
+                # 连续错误发生时，最多每 30 秒上报一次，避免刷屏卡 UI
+                if self._last_error_time is None or \
+                   (now - self._last_error_time).total_seconds() >= 30:
+                    if self.on_error:
+                        repeat = f" (已连续失败 {self._error_count} 次)" if self._error_count > 1 else ""
+                        self.on_error(self.room_id, str(e) + repeat)
+                    self._last_error_time = now
+                    self._error_count = 0
                 for _ in range(self.interval):
                     if not self._running:
                         return

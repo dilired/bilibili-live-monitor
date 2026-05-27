@@ -1,10 +1,10 @@
 #!/bin/bash
-# Mac 打包脚本 — 生成 NookLiveMonitor.app
+# Mac 打包脚本 — 生成 BiliLiveMonitor.app
 # 用法: bash build_mac.sh
 
 set -e
 
-echo "=== Nook's Live Monitor - Mac 打包 ==="
+echo "=== B站直播数据监控 - Mac 打包 ==="
 
 PYTHON=$(which python3.12 2>/dev/null || which python3)
 echo "Python: $PYTHON ($($PYTHON --version))"
@@ -17,7 +17,7 @@ echo "开始打包..."
 $PYTHON -m PyInstaller \
     --onefile \
     --windowed \
-    --name "NookLiveMonitor" \
+    --name "BiliLiveMonitor" \
     --add-data "live_monitor_core.py:." \
     --collect-submodules "bilibili_api" \
     --hidden-import "aiohttp" \
@@ -28,6 +28,6 @@ $PYTHON -m PyInstaller \
     live_monitor_gui.py
 
 echo ""
-echo "打包完成！输出: dist/NookLiveMonitor.app"
+echo "打包完成！输出: dist/BiliLiveMonitor.app"
 echo "可直接双击运行或分发给用户"
-ls -lh dist/NookLiveMonitor* 2>/dev/null || ls -lh dist/
+ls -lh dist/BiliLiveMonitor* 2>/dev/null || ls -lh dist/

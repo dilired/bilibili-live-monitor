@@ -32,9 +32,10 @@ jobs:
           pyinstaller \
             --onefile \
             --windowed \
-            --name "NookLiveMonitor" \
+            --name "BiliLiveMonitor" \
             --add-data "live_monitor_core.py:." \
             --collect-submodules "bilibili_api" \
+            --collect-all "certifi" \
             --hidden-import "aiohttp" \
             --hidden-import "yarl" \
             --hidden-import "multidict" \
@@ -45,12 +46,12 @@ jobs:
       - name: Package as ZIP
         run: |
           cd dist
-          zip -r NookLiveMonitor-mac.zip NookLiveMonitor.app
+          zip -r BiliLiveMonitor-mac.zip BiliLiveMonitor.app
 
       - uses: actions/upload-artifact@v4
         with:
-          name: NookLiveMonitor-mac
-          path: dist/NookLiveMonitor-mac.zip
+          name: BiliLiveMonitor-mac
+          path: dist/BiliLiveMonitor-mac.zip
 
   build-windows:
     runs-on: windows-latest
@@ -69,9 +70,10 @@ jobs:
           pyinstaller `
             --onefile `
             --windowed `
-            --name "NookLiveMonitor" `
+            --name "BiliLiveMonitor" `
             --add-data "live_monitor_core.py;." `
             --collect-submodules "bilibili_api" `
+            --collect-all "certifi" `
             --hidden-import "aiohttp" `
             --hidden-import "yarl" `
             --hidden-import "multidict" `
@@ -81,8 +83,8 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: NookLiveMonitor-windows
-          path: dist/NookLiveMonitor.exe
+          name: BiliLiveMonitor-windows
+          path: dist/BiliLiveMonitor.exe
 
   release:
     needs: [build-mac, build-windows]
@@ -91,7 +93,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: NookLiveMonitor-*
+          pattern: BiliLiveMonitor-*
           path: dist
 
       - name: Display artifacts
@@ -100,6 +102,6 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/NookLiveMonitor-mac/NookLiveMonitor-mac.zip
-            dist/NookLiveMonitor-windows/NookLiveMonitor.exe
+            dist/BiliLiveMonitor-mac/BiliLiveMonitor-mac.zip
+            dist/BiliLiveMonitor-windows/BiliLiveMonitor.exe
           generate_release_notes: true

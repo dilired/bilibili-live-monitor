@@ -1,4 +1,4 @@
-# Nook's Live Monitor 🍃
+# B站直播数据监控
 
 B站直播间数据监控工具，定时采集人气值、看过人数、点赞数，流式写入 CSV。
 
@@ -7,8 +7,8 @@ B站直播间数据监控工具，定时采集人气值、看过人数、点赞�
 ### 直接下载（推荐）
 
 到 [Releases](https://github.com/dilired/bilibili-live-monitor/releases) 下载对应平台版本：
-- **Mac**：`NookLiveMonitor-mac.zip` → 解压后双击运行
-- **Windows**：`NookLiveMonitor.exe` → 双击运行
+- **Mac**：`BiliLiveMonitor-mac.zip` → 解压后双击运行
+- **Windows**：`BiliLiveMonitor.exe` → 双击运行
 
 打开后输入直播间 ID，点击「开始监控」即可。
 

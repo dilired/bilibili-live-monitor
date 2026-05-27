@@ -1,4 +1,4 @@
-"""B站直播间数据监控 - 图形界面（动森风格）
+"""B站直播间数据监控 - 图形界面（暖色风格）
 Tkinter 实现，零额外依赖，Mac / Windows 通用
 """
 
@@ -16,7 +16,7 @@ from bilibili_api import Credential
 from live_monitor_core import LiveMonitor, resolve_output_path
 
 # ============================================================
-#  动森配色方案
+#  暖色主题配色
 # ============================================================
 COLORS = {
     "bg":              "#FEF5E7",   # 暖奶油背景
@@ -43,7 +43,7 @@ COLORS = {
 
 
 class ACFrame(tk.Frame):
-    """动森风格圆角卡片框"""
+    """暖色风格圆角卡片框"""
     def __init__(self, parent, padding=15, **kwargs):
         kwargs.setdefault("bg", COLORS["card"])
         kwargs.setdefault("highlightbackground", COLORS["card_border"])
@@ -56,7 +56,7 @@ class ACFrame(tk.Frame):
 
 
 class ACButton(tk.Canvas):
-    """动森风格按钮 — 圆角、悬停变色"""
+    """暖色风格按钮 — 圆角、悬停变色"""
     def __init__(self, parent, text, command=None, color=COLORS["primary"],
                  width=140, height=38, font_size=12, **kwargs):
         super().__init__(parent, width=width, height=height,
@@ -122,7 +122,7 @@ class ACButton(tk.Canvas):
 class LiveMonitorGUI:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("Nook's Live Monitor  |  动森直播监控")
+        self.root.title("B站直播数据监控")
         self.root.geometry("700x600")
         self.root.minsize(620, 480)
         self.root.configure(bg=COLORS["bg"])
@@ -142,7 +142,7 @@ class LiveMonitorGUI:
         title_frame = tk.Frame(self.root, bg=COLORS["bg"])
         title_frame.pack(fill="x", padx=30, pady=(25, 5))
 
-        tk.Label(title_frame, text="Nook's Live Monitor",
+        tk.Label(title_frame, text="B站直播数据监控",
                  font=("Helvetica Neue", 22, "bold"), fg=COLORS["primary_dark"],
                  bg=COLORS["bg"]).pack(anchor="w")
         tk.Label(title_frame, text="B站直播间数据采集工具  ·  定时轮询人气 / 看过人数 / 点赞",

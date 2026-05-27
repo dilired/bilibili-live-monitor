@@ -3,6 +3,7 @@
 import asyncio
 import csv
 import os
+import re
 from datetime import datetime
 
 # PyInstaller 打包后 SSL 证书需显式指定
@@ -13,6 +14,13 @@ os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 from bilibili_api import live, Credential
 
 OFFLINE_TIMEOUT = 300  # 下播后 5 分钟仍未开播则退出
+
+
+def sanitize_filename(name: str) -> str:
+    """去除文件名中的不安全字符"""
+    name = re.sub(r'[<>:"/\\|?*\n\r\t]', '', name)
+    name = name.replace(' ', '_').strip('._')
+    return name or 'unknown'
 
 
 def ensure_csv(path: str):
@@ -41,7 +49,7 @@ def write_row(path: str, room_id: int, popularity: dict, watched: dict, like_inf
 
 
 def resolve_output_path(output: str, room_id: int, multi_room: bool) -> str:
-    """如果 output 是目录或以 / 结尾，自动生成文件名"""
+    """如果 output 是目录或以 / 结尾，自动生成文件名（临时用 room_id，后续会加上主播名）"""
     is_dir = multi_room or output.endswith(("/", "\\"))
     if not is_dir and os.path.exists(output):
         is_dir = os.path.isdir(output)
@@ -78,9 +86,21 @@ class LiveMonitor:
 
     async def run(self):
         """异步轮询循环，直到停止或超时下播"""
-        ensure_csv(self.output)
         room = live.LiveRoom(room_display_id=self.room_id, credential=self.credential)
         self._running = True
+
+        # 首次获取主播名，更新 CSV 文件名
+        try:
+            info = await room.get_room_info()
+            uname = info.get('anchor_info', {}).get('base_info', {}).get('uname', '')
+            if uname:
+                safe_name = sanitize_filename(uname)
+                output_dir = os.path.dirname(self.output) or '.'
+                self.output = os.path.join(output_dir, f"live_{self.room_id}_{safe_name}.csv")
+        except Exception:
+            pass
+
+        ensure_csv(self.output)
 
         while self._running:
             try:

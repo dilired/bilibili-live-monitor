@@ -41,8 +41,11 @@ def write_row(path: str, room_id: int, popularity: dict, watched: dict, like_inf
 
 
 def resolve_output_path(output: str, room_id: int, multi_room: bool) -> str:
-    """多房间时 output 视为目录"""
-    if multi_room:
+    """如果 output 是目录或以 / 结尾，自动生成文件名"""
+    is_dir = multi_room or output.endswith(("/", "\\"))
+    if not is_dir and os.path.exists(output):
+        is_dir = os.path.isdir(output)
+    if is_dir:
         os.makedirs(output, exist_ok=True)
         return os.path.join(output, f"live_{room_id}.csv")
     return output

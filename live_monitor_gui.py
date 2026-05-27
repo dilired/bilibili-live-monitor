@@ -122,6 +122,11 @@ class ACButton(tk.Canvas):
             self.unbind("<Enter>")
             self.unbind("<Leave>")
             self.unbind("<Button-1>")
+        else:
+            self.current_color = self.color
+            self.bind("<Enter>", self._on_enter)
+            self.bind("<Leave>", self._on_leave)
+            self.bind("<Button-1>", self._on_click)
         self._draw()
 
 

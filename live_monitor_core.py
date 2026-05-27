@@ -17,6 +17,39 @@ OFFLINE_TIMEOUT = 300  # 下播后 5 分钟仍未开播则退出
 MAX_ROOMS = 10           # 同时监控房间数上限
 
 
+def record_session(output_dir: str, room_id: int, anchor_name: str,
+                   started_at: str, ended_at: str, end_reason: str,
+                   final_watched, max_likes: int):
+    """记录一次监控 session 到 sessions.csv（追加模式）"""
+    path = os.path.join(output_dir, "sessions.csv")
+    existed = os.path.exists(path)
+    os.makedirs(output_dir, exist_ok=True)
+    try:
+        with _open_with_retry(path, "a") as f:
+            writer = csv.writer(f)
+            if not existed:
+                writer.writerow(["session_start", "session_end", "room_id",
+                                 "anchor_name", "end_reason",
+                                 "final_watched", "max_likes"])
+            writer.writerow([started_at, ended_at, room_id, anchor_name or '',
+                             end_reason, final_watched or '', max_likes or ''])
+    except PermissionError:
+        pass
+
+
+def _open_with_retry(path, mode, encoding="utf-8-sig", retries=3, delay=0.5):
+    """带重试的文件打开，解决 Windows Excel 锁文件问题"""
+    import time
+    for i in range(retries):
+        try:
+            return open(path, mode, newline="", encoding=encoding)
+        except PermissionError:
+            if i == retries - 1:
+                raise
+            time.sleep(delay)
+    return None
+
+
 async def get_anchor_name(room_id: int) -> str:
     """获取主播名"""
     room = live.LiveRoom(room_display_id=room_id)
@@ -32,28 +65,32 @@ def sanitize_filename(name: str) -> str:
 
 
 def ensure_csv(path: str):
-    """CSV 不存在则创建并写入表头"""
+    """CSV 不存在则创建并写入表头（重试防 Windows 文件锁）"""
     if not os.path.exists(path):
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        with open(path, "w", newline="", encoding="utf-8-sig") as f:
+        with _open_with_retry(path, "w") as f:
             writer = csv.writer(f)
             writer.writerow(["timestamp", "room_id", "popularity", "popularity_text",
                              "watched_num", "watched_text", "likes"])
 
 
 def write_row(path: str, room_id: int, popularity: dict, watched: dict, like_info: dict):
-    """流式追加一行"""
+    """流式追加一行（重试防 Windows 文件锁）"""
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open(path, "a", newline="", encoding="utf-8-sig") as f:
-        writer = csv.writer(f)
-        writer.writerow([
-            ts, room_id,
-            popularity.get("popularity", ""),
-            popularity.get("popularity_text", ""),
-            watched.get("num", ""),
-            watched.get("text_large", ""),
-            like_info.get("total_likes", ""),
-        ])
+    try:
+        with _open_with_retry(path, "a") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                ts, room_id,
+                popularity.get("popularity", ""),
+                popularity.get("popularity_text", ""),
+                watched.get("num", ""),
+                watched.get("text_large", ""),
+                like_info.get("total_likes", ""),
+            ])
+    except PermissionError:
+        return False  # Windows 文件被锁
+    return True
 
 
 def resolve_output_path(output: str, room_id: int, multi_room: bool) -> str:
@@ -80,10 +117,13 @@ class LiveMonitor:
         self._running = False
         self._last_watched = None
         self._last_likes = None
+        self._max_likes = 0
         self._offline_seconds = 0
         self._was_live = True
         self._error_count = 0
         self._last_error_time = None
+        self._write_fail_count = 0  # 连续写入失败计数
+        self._write_blocked_notified = False  # 是否已发送锁文件通知
         self.buffer = []            # 当前会话数据点: [{timestamp, watched_num, popularity, likes}, ...]
 
         # 回调钩子
@@ -94,6 +134,7 @@ class LiveMonitor:
         self.on_error = None     # (room_id, error) -> None
         self.on_relive = None    # (room_id) -> None  重新开播
         self.on_name = None      # (room_id, name) -> None  主播名就绪
+        self.on_write_blocked = None   # (room_id) -> None  CSV被锁
 
     async def run(self):
         """异步轮询循环，直到停止或超时下播"""
@@ -163,8 +204,19 @@ class LiveMonitor:
             watched_num = watched.get("num")
             total_likes = like_info.get("total_likes", 0)
 
-            # 写 CSV
-            write_row(self.output, self.room_id, popularity, watched, like_info)
+            # 写 CSV（带失败追踪，连续 5 次失败则日志+飞书提醒一次）
+            if write_row(self.output, self.room_id, popularity, watched, like_info):
+                self._write_fail_count = 0
+                self._write_blocked_notified = False
+            else:
+                self._write_fail_count += 1
+                if self._write_fail_count >= 5:
+                    msg = f"CSV 写入持续失败，请检查文件是否被其他程序打开 ({self.output})"
+                    if self.on_error:
+                        self.on_error(self.room_id, msg)
+                    if not self._write_blocked_notified and self.on_write_blocked:
+                        self.on_write_blocked(self.room_id)
+                        self._write_blocked_notified = True
 
             # 数据回调
             data = {
@@ -194,6 +246,8 @@ class LiveMonitor:
 
             self._last_watched = watched_num
             self._last_likes = total_likes
+            if total_likes and total_likes > self._max_likes:
+                self._max_likes = total_likes
 
             # 可中断的 sleep：每秒检查一次 _running，响应停止指令
             for _ in range(self.interval):

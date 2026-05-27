@@ -19,7 +19,7 @@ os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 
 from bilibili_api import Credential
 
-from live_monitor_core import LiveMonitor, resolve_output_path, get_anchor_name, MAX_ROOMS
+from live_monitor_core import LiveMonitor, resolve_output_path, get_anchor_name, record_session, MAX_ROOMS
 from live_monitor_notify import notify_start, notify_stop
 
 import matplotlib
@@ -28,8 +28,22 @@ import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.font_manager as fm
+import numpy as np
+import platform
 
-# 配置中文字体（Mac: PingFang / Windows: Microsoft YaHei）
+# 跨平台 UI 字体
+_SYS = platform.system()
+if _SYS == "Windows":
+    _FF = "Microsoft YaHei UI"
+else:
+    _FF = "Helvetica Neue"
+UI_FONT = (_FF, 11)
+UI_FONT_BOLD = (_FF, 11, "bold")
+UI_FONT_TITLE = (_FF, 20, "bold")
+UI_FONT_CARD = (_FF, 22, "bold")
+UI_FONT_SMALL = (_FF, 10)
+UI_FONT_LOG = (_FF, 12, "bold")
+UI_FONT_HINT = (_FF, 14)
 _CJK_FONTS = ['PingFang HK', 'Heiti TC', 'STHeiti', 'Microsoft YaHei', 'SimHei']
 _available = [f.name for f in fm.fontManager.ttflist]
 _found = next((f for f in _CJK_FONTS if f in _available), None)
@@ -95,7 +109,7 @@ class ACButton(tk.Canvas):
         self.create_rectangle(r, 0, w-r, h, fill=c, outline=c)
         self.create_rectangle(0, r, w, h-r, fill=c, outline=c)
         self.create_text(w//2, h//2, text=self.text, fill="white",
-                         font=("Helvetica Neue", self.font_size, "bold"))
+                         font=(UI_FONT[0], self.font_size, "bold"))
 
     def _darken(self, hx):
         r, g, b = int(hx[1:3],16), int(hx[3:5],16), int(hx[5:7],16)
@@ -142,10 +156,10 @@ class LiveMonitorGUI:
         # ---- 标题 ----
         tf = tk.Frame(self.root, bg=COLORS["bg"])
         tf.pack(fill="x", padx=25, pady=(18, 6))
-        tk.Label(tf, text="B站直播数据监控", font=("Helvetica Neue", 20, "bold"),
+        tk.Label(tf, text="B站直播数据监控", font=UI_FONT_TITLE,
                  fg=COLORS["primary_dark"], bg=COLORS["bg"]).pack(anchor="w")
         tk.Label(tf, text="实时采集人气 / 看过人数 / 点赞数，流式写入 CSV · 上限 10 个房间",
-                 font=("Helvetica Neue", 10), fg=COLORS["text_light"],
+                 font=UI_FONT_SMALL, fg=COLORS["text_light"],
                  bg=COLORS["bg"]).pack(anchor="w")
 
         # ---- 设置栏 (单行紧凑) ----
@@ -156,47 +170,47 @@ class LiveMonitorGUI:
         # 行1: 房间ID + 间隔 + 路径
         r1 = tk.Frame(sf, bg=COLORS["card"])
         r1.pack(fill="x", padx=15, pady=(12, 4))
-        tk.Label(r1, text="房间ID", font=("Helvetica Neue", 11, "bold"),
+        tk.Label(r1, text="房间ID", font=UI_FONT_BOLD,
                  fg=COLORS["text"], bg=COLORS["card"]).pack(side="left")
-        self.room_entry = tk.Entry(r1, width=28, font=("Helvetica Neue", 11),
+        self.room_entry = tk.Entry(r1, width=28, font=UI_FONT,
                                    bg=COLORS["input_bg"], fg=COLORS["text"],
                                    highlightbackground=COLORS["input_border"],
                                    highlightthickness=1, relief="flat", bd=0)
         self.room_entry.pack(side="left", padx=(6, 14), ipady=3)
         self.room_entry.insert(0, "13308358")
 
-        tk.Label(r1, text="间隔", font=("Helvetica Neue", 11, "bold"),
+        tk.Label(r1, text="间隔", font=UI_FONT_BOLD,
                  fg=COLORS["text"], bg=COLORS["card"]).pack(side="left")
         self.interval_var = tk.StringVar(value="60")
         self.interval_entry = tk.Entry(r1, textvariable=self.interval_var, width=5,
-                      font=("Helvetica Neue", 11), bg=COLORS["input_bg"], fg=COLORS["text"],
+                      font=UI_FONT, bg=COLORS["input_bg"], fg=COLORS["text"],
                       highlightbackground=COLORS["input_border"],
                       highlightthickness=1, relief="flat", bd=0)
         self.interval_entry.pack(side="left", padx=(6, 4), ipady=3)
-        tk.Label(r1, text="秒", font=("Helvetica Neue", 11),
+        tk.Label(r1, text="秒", font=UI_FONT,
                  fg=COLORS["text"], bg=COLORS["card"]).pack(side="left", padx=(0, 14))
 
-        tk.Label(r1, text="保存", font=("Helvetica Neue", 11, "bold"),
+        tk.Label(r1, text="保存", font=UI_FONT_BOLD,
                  fg=COLORS["text"], bg=COLORS["card"]).pack(side="left")
         self.output_var = tk.StringVar(value="./data/")
         self.oe = tk.Entry(r1, textvariable=self.output_var, width=18,
-                           font=("Helvetica Neue", 11), bg=COLORS["input_bg"], fg=COLORS["text"],
+                           font=UI_FONT, bg=COLORS["input_bg"], fg=COLORS["text"],
                            highlightbackground=COLORS["input_border"],
                            highlightthickness=1, relief="flat", bd=0)
         self.oe.pack(side="left", padx=(6, 4), ipady=3)
         self.browse_btn = ACButton(r1, text="浏览", color=COLORS["brown"],
-                                   width=55, height=28, font_size=10,
+                                   width=60, height=30, font_size=11,
                                    command=self._browse_output)
         self.browse_btn.pack(side="left")
 
         # 行2: Webhook + 按钮
         r2 = tk.Frame(sf, bg=COLORS["card"])
         r2.pack(fill="x", padx=15, pady=(2, 12))
-        tk.Label(r2, text="飞书通知", font=("Helvetica Neue", 11, "bold"),
+        tk.Label(r2, text="飞书通知", font=UI_FONT_BOLD,
                  fg=COLORS["text"], bg=COLORS["card"]).pack(side="left")
         self.webhook_var = tk.StringVar()
         self.webhook_entry = tk.Entry(r2, textvariable=self.webhook_var, width=40,
-                      font=("Helvetica Neue", 11), bg=COLORS["input_bg"], fg=COLORS["text"],
+                      font=UI_FONT, bg=COLORS["input_bg"], fg=COLORS["text"],
                       highlightbackground=COLORS["input_border"],
                       highlightthickness=1, relief="flat", bd=0)
         self.webhook_entry.pack(side="left", padx=(6, 0), ipady=3, fill="x", expand=True)
@@ -209,7 +223,8 @@ class LiveMonitorGUI:
         self.stop_btn.pack(side="right", padx=(0, 6))
         self.stop_btn.set_state(disabled=True)
         self.add_btn = ACButton(r2, text="+ 添加房间", color=COLORS["brown"],
-                                width=100, command=self._add_room)
+                                width=120, height=36, font_size=11,
+                                command=self._add_room)
         self.add_btn.pack(side="right", padx=(0, 6))
 
         # ---- Tab 图表区 ----
@@ -220,7 +235,7 @@ class LiveMonitorGUI:
         style.theme_use("clam")
         style.configure("TNotebook", background=COLORS["bg"], borderwidth=0)
         style.configure("TNotebook.Tab",
-                        font=("Helvetica Neue", 11, "bold"),
+                        font=UI_FONT_BOLD,
                         padding=[22, 8],
                         background=COLORS["bg"],
                         foreground=COLORS["text_light"],
@@ -237,14 +252,14 @@ class LiveMonitorGUI:
         lf = tk.Frame(self.root, bg=COLORS["card"], highlightbackground=COLORS["card_border"],
                       highlightthickness=1, bd=0)
         lf.pack(fill="x", padx=25, pady=(0, 5))
-        tk.Label(lf, text="运行日志", font=("Helvetica Neue", 12, "bold"),
+        tk.Label(lf, text="运行日志", font=UI_FONT_LOG,
                  fg=COLORS["brown_dark"], bg=COLORS["card"]).pack(anchor="w", padx=15, pady=(8, 4))
 
         lc = tk.Frame(lf, bg=COLORS["log_bg"], highlightbackground=COLORS["card_border"],
                       highlightthickness=1, bd=0)
         lc.pack(fill="both", padx=15, pady=(0, 10))
 
-        self.log_text = tk.Text(lc, font=("Helvetica Neue", 10), height=6,
+        self.log_text = tk.Text(lc, font=UI_FONT_SMALL, height=6,
                                 bg=COLORS["log_bg"], fg=COLORS["log_text"],
                                 wrap="word", relief="flat", bd=0, padx=10, pady=6,
                                 state="disabled")
@@ -264,10 +279,10 @@ class LiveMonitorGUI:
         self.status_dot.pack(side="left", padx=(15, 6))
         self.status_dot.create_oval(1, 1, 9, 9, fill=COLORS["status_offline"], outline="")
         self.status_label = tk.Label(self.sf2, text="就绪",
-                                     font=("Helvetica Neue", 10),
+                                     font=UI_FONT_SMALL,
                                      fg="#FEF5E7", bg=COLORS["brown_dark"])
         self.status_label.pack(side="left")
-        self.room_count_label = tk.Label(self.sf2, text="", font=("Helvetica Neue", 10),
+        self.room_count_label = tk.Label(self.sf2, text="", font=UI_FONT_SMALL,
                                          fg=COLORS["brown_light"], bg=COLORS["brown_dark"])
         self.room_count_label.pack(side="right", padx=15)
 
@@ -277,7 +292,7 @@ class LiveMonitorGUI:
         f = tk.Frame(self.notebook, bg=COLORS["card"])
         self.notebook.add(f, text="无房间")
         tk.Label(f, text="输入直播间 ID，点击「开始监控」",
-                 font=("Helvetica Neue", 14), fg=COLORS["text_light"],
+                 font=UI_FONT_HINT, fg=COLORS["text_light"],
                  bg=COLORS["card"]).pack(expand=True)
 
     def _create_room_tab(self, room_id: int):
@@ -300,9 +315,9 @@ class LiveMonitorGUI:
         c1 = tk.Frame(cards, bg=COLORS["white"], highlightbackground=COLORS["card_border"],
                       highlightthickness=1)
         c1.pack(side="left", fill="x", expand=True, padx=(0, 6))
-        tk.Label(c1, text="人气值", font=("Helvetica Neue", 10),
+        tk.Label(c1, text="人气值", font=UI_FONT_SMALL,
                  fg=COLORS["text_light"], bg=COLORS["white"]).pack(pady=(8, 0))
-        pop_label = tk.Label(c1, text="-", font=("Helvetica Neue", 22, "bold"),
+        pop_label = tk.Label(c1, text="-", font=UI_FONT_CARD,
                              fg=COLORS["primary_dark"], bg=COLORS["white"])
         pop_label.pack(pady=(0, 8))
 
@@ -310,9 +325,9 @@ class LiveMonitorGUI:
         c2 = tk.Frame(cards, bg=COLORS["white"], highlightbackground=COLORS["card_border"],
                       highlightthickness=1)
         c2.pack(side="left", fill="x", expand=True, padx=(0, 6))
-        tk.Label(c2, text="看过人数", font=("Helvetica Neue", 10),
+        tk.Label(c2, text="看过人数", font=UI_FONT_SMALL,
                  fg=COLORS["text_light"], bg=COLORS["white"]).pack(pady=(8, 0))
-        watched_label = tk.Label(c2, text="-", font=("Helvetica Neue", 22, "bold"),
+        watched_label = tk.Label(c2, text="-", font=UI_FONT_CARD,
                                  fg=COLORS["primary_dark"], bg=COLORS["white"])
         watched_label.pack(pady=(0, 8))
 
@@ -320,9 +335,9 @@ class LiveMonitorGUI:
         c3 = tk.Frame(cards, bg=COLORS["white"], highlightbackground=COLORS["card_border"],
                       highlightthickness=1)
         c3.pack(side="left", fill="x", expand=True)
-        tk.Label(c3, text="点赞数", font=("Helvetica Neue", 10),
+        tk.Label(c3, text="点赞数", font=UI_FONT_SMALL,
                  fg=COLORS["text_light"], bg=COLORS["white"]).pack(pady=(8, 0))
-        likes_label = tk.Label(c3, text="-", font=("Helvetica Neue", 22, "bold"),
+        likes_label = tk.Label(c3, text="-", font=UI_FONT_CARD,
                                fg=COLORS["primary_dark"], bg=COLORS["white"])
         likes_label.pack(pady=(0, 8))
 
@@ -431,6 +446,7 @@ class LiveMonitorGUI:
             m.on_error = self._on_error
             m.on_relive = self._on_relive
             m.on_name = self._on_name
+            m.on_write_blocked = self._on_write_blocked
             self.monitors[rid] = m
 
         self.thread = threading.Thread(target=self._run_async_loop, daemon=True)
@@ -441,13 +457,21 @@ class LiveMonitorGUI:
         room_info = [(rid, self.room_names.get(rid, '')) for rid in room_ids]
         notify_start(self.webhook_var.get().strip(), room_info, interval, output)
 
-    def _stop(self):
+    def _stop(self, reason="manual"):
         webhook = self.webhook_var.get().strip()
+        stopped_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        started_ts = self.started_at.strftime("%Y-%m-%d %H:%M:%S") if self.started_at else ""
+
         if self.started_at:
             room_info = [(rid, self.room_names.get(rid, '')) for rid in self.room_ids]
             final_stats = {}
             for rid, m in self.monitors.items():
                 final_stats[rid] = {"watched": m._last_watched, "likes": m._last_likes}
+                # 记录 session 到 CSV
+                out_dir = os.path.dirname(m.output) or "."
+                record_session(out_dir, rid, self.room_names.get(rid, ''),
+                             started_ts, stopped_at, reason,
+                             m._last_watched, m._max_likes)
             notify_stop(webhook, room_info, self.started_at, final_stats)
 
         self._log("正在停止监控...")
@@ -497,6 +521,7 @@ class LiveMonitorGUI:
         m.on_error = self._on_error
         m.on_relive = self._on_relive
         m.on_name = self._on_name
+        m.on_write_blocked = self._on_write_blocked
         self.monitors[new_id] = m
 
         # 在新线程中启动 (join 到现有 gather)
@@ -554,6 +579,9 @@ class LiveMonitorGUI:
     def _on_name(self, room_id, name):
         self.msg_queue.put(("name", (room_id, name)))
 
+    def _on_write_blocked(self, room_id):
+        self.msg_queue.put(("write_blocked", room_id))
+
     # ==================== 消息处理 ====================
 
     def _poll_queue(self):
@@ -602,8 +630,16 @@ class LiveMonitorGUI:
                         ax.set_facecolor(COLORS["card"])
                         ax.spines['top'].set_visible(False)
                         ax.spines['right'].set_visible(False)
-                        ax.plot(times, watched, color=COLORS["primary"], linewidth=2)
-                        ax.fill_between(range(len(times)), watched, alpha=0.1,
+
+                        # 插值平滑：在原始点之间插入更多点，消除阶梯感
+                        x_orig = np.arange(len(watched))
+                        x_smooth = np.linspace(0, len(watched)-1, max(len(watched)*3, 20))
+                        y_smooth = np.interp(x_smooth, x_orig, watched)
+
+                        ax.plot(x_smooth, y_smooth, color=COLORS["primary"],
+                                linewidth=2.5, solid_capstyle='round',
+                                solid_joinstyle='round')
+                        ax.fill_between(x_smooth, y_smooth, alpha=0.08,
                                         color=COLORS["primary"])
                         ax.set_ylim(y_min, y_max)
                         ax.tick_params(colors=COLORS["text_light"], labelsize=8)
@@ -645,6 +681,25 @@ class LiveMonitorGUI:
                             self.notebook.tab(tab_id, text=f"{name}")
                     self._log(f"[房间{room_id}] 主播: {name}")
 
+                elif msg_type == "write_blocked":
+                    room_id = payload
+                    self._log(f"[房间{room_id}] CSV文件被占用，写入暂停", "offline")
+                    # 飞书提醒一次
+                    webhook = self.webhook_var.get().strip()
+                    name = self.room_names.get(room_id, str(room_id))
+                    from live_monitor_notify import _send_card
+                    try:
+                        _send_card(webhook,
+                            header_text="⚠️ CSV 写入异常",
+                            header_color="red",
+                            content_lines=[
+                                f"**房间：** {name}（{room_id}）",
+                                f"**原因：** CSV 文件被其他程序占用，数据暂时无法写入",
+                                f"**建议：** 关闭 Excel 或其他打开该文件的程序后自动恢复",
+                            ])
+                    except Exception:
+                        pass
+
                 elif msg_type == "stopped":
                     self.root.after(0, self._on_all_stopped)
 
@@ -655,7 +710,7 @@ class LiveMonitorGUI:
 
     def _on_all_stopped(self):
         if self.running:
-            self._stop()
+            self._stop(reason="offline")
 
     # ==================== 辅助方法 ====================
 

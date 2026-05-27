@@ -5,7 +5,7 @@ echo === B站直播数据监控 - Windows 打包 ===
 echo.
 
 echo 安装依赖...
-pip install bilibili-api-python aiohttp pyinstaller
+pip install bilibili-api-python aiohttp certifi matplotlib pyinstaller
 
 echo.
 echo 开始打包...
@@ -13,7 +13,7 @@ python -m PyInstaller ^
     --onefile ^
     --windowed ^
     --name "BiliLiveMonitor" ^
-    --add-data "live_monitor_core.py;." ^
+    --add-data "live_monitor_core.py;." --add-data "live_monitor_notify.py;." ^
     --collect-submodules "bilibili_api" ^
     --hidden-import "aiohttp" ^
     --hidden-import "yarl" ^

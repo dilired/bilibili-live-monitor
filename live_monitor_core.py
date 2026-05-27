@@ -14,6 +14,14 @@ os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 from bilibili_api import live, Credential
 
 OFFLINE_TIMEOUT = 300  # 下播后 5 分钟仍未开播则退出
+MAX_ROOMS = 50          # 同时监控房间数上限
+
+
+async def get_anchor_name(room_id: int) -> str:
+    """获取主播名"""
+    room = live.LiveRoom(room_display_id=room_id)
+    info = await room.get_room_info()
+    return info.get('anchor_info', {}).get('base_info', {}).get('uname', '')
 
 
 def sanitize_filename(name: str) -> str:
@@ -68,13 +76,15 @@ class LiveMonitor:
         self.output = output
         self.interval = interval
         self.credential = credential
+        self.anchor_name = ''       # 主播名，启动后获取
         self._running = False
         self._last_watched = None
         self._last_likes = None
         self._offline_seconds = 0
         self._was_live = True
-        self._error_count = 0        # 连续错误计数，用于限流
-        self._last_error_time = None  # 上次报错时间
+        self._error_count = 0
+        self._last_error_time = None
+        self.buffer = []            # 当前会话数据点: [{timestamp, watched_num, popularity, likes}, ...]
 
         # 回调钩子
         self.on_data = None      # (room_id, data_dict) -> None
@@ -83,6 +93,7 @@ class LiveMonitor:
         self.on_offline_end = None  # (room_id) -> None
         self.on_error = None     # (room_id, error) -> None
         self.on_relive = None    # (room_id) -> None  重新开播
+        self.on_name = None      # (room_id, name) -> None  主播名就绪
 
     async def run(self):
         """异步轮询循环，直到停止或超时下播"""
@@ -94,9 +105,12 @@ class LiveMonitor:
             info = await room.get_room_info()
             uname = info.get('anchor_info', {}).get('base_info', {}).get('uname', '')
             if uname:
+                self.anchor_name = uname
                 safe_name = sanitize_filename(uname)
                 output_dir = os.path.dirname(self.output) or '.'
                 self.output = os.path.join(output_dir, f"live_{self.room_id}_{safe_name}.csv")
+                if self.on_name:
+                    self.on_name(self.room_id, uname)
         except Exception:
             pass
 
@@ -164,6 +178,9 @@ class LiveMonitor:
             }
             if self.on_data:
                 self.on_data(self.room_id, data)
+
+            # 追加当前会话 Buffer
+            self.buffer.append(data)
 
             # 变化检测
             if self._last_watched is not None and watched_num != self._last_watched:

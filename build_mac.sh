@@ -10,15 +10,15 @@ PYTHON=$(which python3.12 2>/dev/null || which python3)
 echo "Python: $PYTHON ($($PYTHON --version))"
 
 echo "安装依赖..."
-$PYTHON -m pip install --break-system-packages bilibili-api-python aiohttp pyinstaller 2>/dev/null || \
-$PYTHON -m pip install bilibili-api-python aiohttp pyinstaller
+$PYTHON -m pip install --break-system-packages bilibili-api-python aiohttp certifi matplotlib pyinstaller 2>/dev/null || \
+$PYTHON -m pip install bilibili-api-python aiohttp certifi matplotlib pyinstaller
 
 echo "开始打包..."
 $PYTHON -m PyInstaller \
     --onefile \
     --windowed \
     --name "BiliLiveMonitor" \
-    --add-data "live_monitor_core.py:." \
+    --add-data "live_monitor_core.py:." --add-data "live_monitor_notify.py:." \
     --collect-submodules "bilibili_api" \
     --hidden-import "aiohttp" \
     --hidden-import "yarl" \

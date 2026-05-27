@@ -6,7 +6,6 @@ from datetime import datetime
 
 
 def _send_card(webhook_url: str, header_text: str, header_color: str, content_lines: list):
-    """发送飞书消息卡片"""
     elements = [{
         "tag": "div",
         "text": {"tag": "lark_md", "content": "\n".join(content_lines)}
@@ -29,25 +28,28 @@ def _send_card(webhook_url: str, header_text: str, header_color: str, content_li
     }
 
     req = urllib.request.Request(
-        url=webhook_url,
-        data=json.dumps(body).encode(),
-        headers={"Content-Type": "application/json"},
-        method="POST",
+        url=webhook_url, data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json"}, method="POST",
     )
     urllib.request.urlopen(req, timeout=10)
 
 
-def notify_start(webhook_url: str, room_ids: list, interval: int, output: str):
-    """监控启动播报"""
+def notify_start(webhook_url: str, room_info: list, interval: int, output: str):
+    """监控启动播报  room_info: [(room_id, anchor_name), ...]"""
     if not webhook_url:
         return
     try:
-        room_str = "、".join(str(r) for r in room_ids)
+        room_lines = []
+        for rid, name in room_info:
+            label = f"{name}" if name else f"房间 {rid}"
+            room_lines.append(f"- {label}（{rid}）")
+        room_str = "\n".join(room_lines) if room_lines else "、".join(str(r) for r, _ in room_info)
+
         _send_card(webhook_url,
-            header_text=f"📊 直播监控已启动",
+            header_text="📊 直播监控已启动",
             header_color="green",
             content_lines=[
-                f"**直播间：** {room_str}",
+                f"**监控房间：**\n{room_str}",
                 f"**轮询间隔：** {interval}s",
                 f"**保存路径：** {output}",
                 f"**启动时间：** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
@@ -56,7 +58,7 @@ def notify_start(webhook_url: str, room_ids: list, interval: int, output: str):
         print(f"[Notify] 启动播报失败: {e}", flush=True)
 
 
-def notify_stop(webhook_url: str, room_ids: list, started_at: datetime,
+def notify_stop(webhook_url: str, room_info: list, started_at: datetime,
                 stats: dict = None):
     """监控停止播报"""
     if not webhook_url:
@@ -67,18 +69,21 @@ def notify_stop(webhook_url: str, room_ids: list, started_at: datetime,
         minutes, seconds = divmod(remainder, 60)
         duration_str = f"{hours}时{minutes}分{seconds}秒" if hours else f"{minutes}分{seconds}秒"
 
-        room_str = "、".join(str(r) for r in room_ids)
-        lines = [
-            f"**直播间：** {room_str}",
-            f"**运行时长：** {duration_str}",
-        ]
-        if stats:
-            for rid, s in stats.items():
-                lines.append(f"**房间 {rid}：** 看过 {s.get('watched', 'N/A')} | 点赞 {s.get('likes', 'N/A')}")
+        room_lines = []
+        for rid, name in room_info:
+            s = stats.get(rid, {}) if stats else {}
+            label = f"{name}" if name else f"房间 {rid}"
+            w = s.get('watched', 'N/A')
+            l = s.get('likes', 'N/A')
+            room_lines.append(f"- {label}（{rid}）｜看过 **{w}** 点赞 **{l}**")
+        room_str = "\n".join(room_lines)
 
         _send_card(webhook_url,
-            header_text=f"⏹ 直播监控已停止",
+            header_text="⏹ 直播监控已停止",
             header_color="red",
-            content_lines=lines)
+            content_lines=[
+                f"**运行时长：** {duration_str}",
+                f"**监控结果：**\n{room_str}",
+            ])
     except Exception as e:
         print(f"[Notify] 停止播报失败: {e}", flush=True)

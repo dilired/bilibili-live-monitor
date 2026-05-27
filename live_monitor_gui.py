@@ -19,7 +19,7 @@ os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 
 from bilibili_api import Credential
 
-from live_monitor_core import LiveMonitor, resolve_output_path, MAX_ROOMS
+from live_monitor_core import LiveMonitor, resolve_output_path, get_anchor_name, MAX_ROOMS
 from live_monitor_notify import notify_start, notify_stop
 
 import matplotlib
@@ -387,6 +387,9 @@ class LiveMonitorGUI:
         if room_ids is None:
             return
 
+        # 清理旧 Tab
+        self._show_empty_tab()
+
         self.room_ids = room_ids
         self.room_names = {}
         self.monitors = {}
@@ -407,6 +410,15 @@ class LiveMonitorGUI:
         self._log(f"开始监控 {len(room_ids)} 个直播间: {room_ids}")
         self._log(f"间隔: {interval}s  |  保存: {output}")
         self._log("=" * 40, "time")
+
+        # 预取主播名（用于飞书播报和 Tab 标题）
+        for rid in room_ids:
+            try:
+                name = asyncio.run(get_anchor_name(rid))
+                if name:
+                    self.room_names[rid] = name
+            except Exception:
+                pass
 
         multi = len(room_ids) > 1
         for rid in room_ids:
@@ -445,6 +457,8 @@ class LiveMonitorGUI:
         self.running = False
         self.room_ids = []
         self.started_at = None
+        self._tab_data = {}
+        self._show_empty_tab()
         self._set_inputs_enabled(True)
         self.start_btn.set_state(disabled=False)
         self.stop_btn.set_state(disabled=True)

@@ -71,11 +71,10 @@ def notify_stop(webhook_url: str, room_info: list, started_at: datetime,
 
         room_lines = []
         for rid, name in room_info:
-            s = stats.get(rid, {}) if stats else {}
             label = f"{name}" if name else f"房间 {rid}"
+            s = stats.get(rid, {}) if stats else {}
             w = s.get('watched', 'N/A')
-            l = s.get('likes', 'N/A')
-            room_lines.append(f"- {label}（{rid}）｜看过 **{w}** 点赞 **{l}**")
+            room_lines.append(f"- {label}（{rid}）｜看过 **{w}**")
         room_str = "\n".join(room_lines)
 
         _send_card(webhook_url,

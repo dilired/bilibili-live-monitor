@@ -14,7 +14,7 @@ os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 from bilibili_api import live, Credential
 
 OFFLINE_TIMEOUT = 300  # 下播后 5 分钟仍未开播则退出
-MAX_ROOMS = 50          # 同时监控房间数上限
+MAX_ROOMS = 10           # 同时监控房间数上限
 
 
 async def get_anchor_name(room_id: int) -> str:

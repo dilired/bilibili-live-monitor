@@ -134,7 +134,7 @@ class LiveMonitorGUI:
         tf.pack(fill="x", padx=25, pady=(18, 6))
         tk.Label(tf, text="B站直播数据监控", font=("Helvetica Neue", 20, "bold"),
                  fg=COLORS["primary_dark"], bg=COLORS["bg"]).pack(anchor="w")
-        tk.Label(tf, text="实时采集人气 / 看过人数 / 点赞数，流式写入 CSV · 上限 50 个房间",
+        tk.Label(tf, text="实时采集人气 / 看过人数 / 点赞数，流式写入 CSV · 上限 10 个房间",
                  font=("Helvetica Neue", 10), fg=COLORS["text_light"],
                  bg=COLORS["bg"]).pack(anchor="w")
 

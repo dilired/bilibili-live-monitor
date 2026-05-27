@@ -24,8 +24,18 @@ from live_monitor_notify import notify_start, notify_stop
 
 import matplotlib
 matplotlib.use('TkAgg')
+import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import matplotlib.font_manager as fm
+
+# 配置中文字体（Mac: PingFang / Windows: Microsoft YaHei）
+_CJK_FONTS = ['PingFang HK', 'Heiti TC', 'STHeiti', 'Microsoft YaHei', 'SimHei']
+_available = [f.name for f in fm.fontManager.ttflist]
+_found = next((f for f in _CJK_FONTS if f in _available), None)
+if _found:
+    plt.rcParams['font.sans-serif'] = [_found]
+    plt.rcParams['axes.unicode_minus'] = False
 
 # ============================================================
 #  暖色主题配色
@@ -209,9 +219,16 @@ class LiveMonitorGUI:
         style = ttk.Style()
         style.theme_use("clam")
         style.configure("TNotebook", background=COLORS["bg"], borderwidth=0)
-        style.configure("TNotebook.Tab", font=("Helvetica Neue", 11),
-                        padding=[18, 6], background=COLORS["brown_light"])
-        style.map("TNotebook.Tab", background=[("selected", COLORS["card"])])
+        style.configure("TNotebook.Tab",
+                        font=("Helvetica Neue", 11, "bold"),
+                        padding=[22, 8],
+                        background=COLORS["bg"],
+                        foreground=COLORS["text_light"],
+                        borderwidth=0)
+        style.map("TNotebook.Tab",
+                  background=[("selected", COLORS["card"])],
+                  foreground=[("selected", COLORS["primary_dark"])],
+                  expand=[("selected", [2, 2, 2, 0])])
 
         # 默认空白页
         self._show_empty_tab()
@@ -229,7 +246,8 @@ class LiveMonitorGUI:
 
         self.log_text = tk.Text(lc, font=("Helvetica Neue", 10), height=6,
                                 bg=COLORS["log_bg"], fg=COLORS["log_text"],
-                                wrap="word", relief="flat", bd=0, padx=10, pady=6)
+                                wrap="word", relief="flat", bd=0, padx=10, pady=6,
+                                state="disabled")
         self.log_text.pack(side="left", fill="both", expand=True)
         sb = tk.Scrollbar(lc, orient="vertical", command=self.log_text.yview)
         sb.pack(side="right", fill="y")
@@ -546,28 +564,35 @@ class LiveMonitorGUI:
                         td["likes_label"].config(text=data.get("likes", "-"))
 
                 elif msg_type == "chart_update":
-                    # 限定每秒最多更新一次图表
                     room_id = payload
                     td = self._tab_data.get(room_id)
                     if td and room_id in self.monitors:
                         m = self.monitors[room_id]
                         if not m.buffer:
                             continue
-                        # 最后 200 个数据点足够
                         pts = m.buffer[-200:]
                         times = [p['timestamp'][11:19] for p in pts]
                         watched = [p['watched_num'] or 0 for p in pts]
+
+                        # 动态 Y 轴：小变化也能明显看出趋势
+                        w_min, w_max = min(watched), max(watched)
+                        w_range = w_max - w_min
+                        if w_range == 0:
+                            w_range = max(1, w_max * 0.001)
+                        padding = max(w_range * 0.3, 5)
+                        y_min = max(0, w_min - padding)
+                        y_max = w_max + padding
+
                         ax = td["ax"]
                         ax.clear()
                         ax.set_facecolor(COLORS["card"])
                         ax.spines['top'].set_visible(False)
                         ax.spines['right'].set_visible(False)
-                        ax.plot(times, watched, color=COLORS["primary"], linewidth=2,
-                                marker='', markersize=0)
+                        ax.plot(times, watched, color=COLORS["primary"], linewidth=2)
                         ax.fill_between(range(len(times)), watched, alpha=0.1,
                                         color=COLORS["primary"])
+                        ax.set_ylim(y_min, y_max)
                         ax.tick_params(colors=COLORS["text_light"], labelsize=8)
-                        # 只显示几个 x 轴标签避免拥挤
                         step = max(1, len(times) // 5)
                         ax.set_xticks(range(0, len(times), step))
                         ax.set_xticklabels([times[i] for i in range(0, len(times), step)],
@@ -634,7 +659,9 @@ class LiveMonitorGUI:
 
     def _log(self, msg, tag=None):
         ts = datetime.now().strftime("%H:%M:%S")
+        self.log_text.configure(state="normal")
         self.log_text.insert("end", f"[{ts}] {msg}\n", tag)
+        self.log_text.configure(state="disabled")
         self.log_text.see("end")
 
     def run(self):

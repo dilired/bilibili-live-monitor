@@ -2,6 +2,7 @@
 用法:
     python kubo_test_watch.py -r 13308358
     python kubo_test_watch.py -r 26044264 13308358 -i 60 -o ./data/
+    python kubo_test_watch.py -r 13308358 --webhook https://open.feishu.cn/.../xxx
 """
 
 import argparse
@@ -16,6 +17,7 @@ os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 
 from bilibili_api import Credential
 from live_monitor_core import LiveMonitor, resolve_output_path
+from live_monitor_notify import notify_start, notify_stop
 
 DEFAULT_INTERVAL = 60
 DEFAULT_OUTPUT = "live_data.csv"
@@ -26,6 +28,7 @@ def parse_args():
     p.add_argument("-r", "--rooms", type=int, nargs="+", required=True, help="直播间 ID")
     p.add_argument("-i", "--interval", type=int, default=DEFAULT_INTERVAL, help="轮询间隔秒数")
     p.add_argument("-o", "--output", default=DEFAULT_OUTPUT, help="CSV 输出路径")
+    p.add_argument("--webhook", default="", help="飞书 Webhook URL，启动/停止时播报 (可选)")
     p.add_argument("--sessdata", default="", help="B站 SESSDATA (可选)")
     return p.parse_args()
 
@@ -63,7 +66,7 @@ def on_relive(room_id):
     print(f"[{ts}] [房间{room_id}] 重新开播！", flush=True)
 
 
-async def run(room_ids, interval, output, credential):
+async def run(room_ids, interval, output, credential, webhook):
     multi = len(room_ids) > 1
     monitors = []
     for rid in room_ids:
@@ -78,8 +81,20 @@ async def run(room_ids, interval, output, credential):
         m.on_relive = on_relive
         monitors.append(m)
 
+    notify_start(webhook, room_ids, interval, output)
     print(f"共 {len(room_ids)} 个房间，间隔 {interval}s，Ctrl+C 停止", flush=True)
-    await asyncio.gather(*[m.run() for m in monitors])
+
+    started_at = datetime.now()
+    try:
+        await asyncio.gather(*[m.run() for m in monitors])
+    finally:
+        final_stats = {}
+        for m in monitors:
+            final_stats[m.room_id] = {
+                "watched": m._last_watched,
+                "likes": m._last_likes,
+            }
+        notify_stop(webhook, room_ids, started_at, final_stats)
 
 
 def main():
@@ -89,7 +104,7 @@ def main():
     ) if args.sessdata else None
 
     try:
-        asyncio.run(run(args.rooms, args.interval, args.output, credential))
+        asyncio.run(run(args.rooms, args.interval, args.output, credential, args.webhook))
     except KeyboardInterrupt:
         print("\n已停止", flush=True)
 

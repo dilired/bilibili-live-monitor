@@ -35,6 +35,7 @@ jobs:
             --name "BiliLiveMonitor" \
             --icon "icon.icns" \
             --add-data "live_monitor_core.py:." \
+            --add-data "live_monitor_notify.py:." \
             --collect-submodules "bilibili_api" \
             --collect-all "certifi" \
             --hidden-import "aiohttp" \
@@ -74,6 +75,7 @@ jobs:
             --name "BiliLiveMonitor" `
             --icon "icon.ico" `
             --add-data "live_monitor_core.py;." `
+            --add-data "live_monitor_notify.py;." `
             --collect-submodules "bilibili_api" `
             --collect-all "certifi" `
             --hidden-import "aiohttp" `

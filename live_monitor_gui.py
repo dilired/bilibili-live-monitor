@@ -20,6 +20,7 @@ os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 from bilibili_api import Credential
 
 from live_monitor_core import LiveMonitor, resolve_output_path
+from live_monitor_notify import notify_start, notify_stop
 
 # ============================================================
 #  暖色主题配色
@@ -142,6 +143,8 @@ class LiveMonitorGUI:
         self.monitors = []
         self.monitor_threads = []
         self.msg_queue = queue.Queue()
+        self.started_at = None       # 启动时间，用于停止播报
+        self.notify_rooms = []       # 上次启动的房间列表
 
         self._build_ui()
         self._poll_queue()
@@ -219,6 +222,23 @@ class LiveMonitorGUI:
                                    width=70, height=32, font_size=11,
                                    command=self._browse_output)
         self.browse_btn.pack(side="left", padx=(8, 0))
+
+        # 飞书 Webhook
+        row4 = tk.Frame(settings_card.inner, bg=COLORS["card"])
+        row4.pack(fill="x", pady=3)
+        tk.Label(row4, text="飞书通知", width=10, anchor="w",
+                 font=("Helvetica Neue", 12), fg=COLORS["text"],
+                 bg=COLORS["card"]).pack(side="left")
+        self.webhook_var = tk.StringVar(value="")
+        webhook_entry = tk.Entry(row4, textvariable=self.webhook_var,
+                                 font=("Helvetica Neue", 12),
+                                 bg=COLORS["input_bg"], fg=COLORS["text"],
+                                 insertbackground=COLORS["text"],
+                                 highlightbackground=COLORS["input_border"],
+                                 highlightthickness=1, relief="flat", bd=0)
+        webhook_entry.pack(side="left", fill="x", expand=True, ipady=4)
+        tk.Label(row4, text="可选，启动/停止时飞书播报", font=("Helvetica Neue", 10),
+                 fg=COLORS["text_light"], bg=COLORS["card"]).pack(side="left", padx=(8, 0))
 
         # ---- 按钮区 ----
         btn_frame = tk.Frame(self.root, bg=COLORS["bg"])
@@ -348,7 +368,24 @@ class LiveMonitorGUI:
         thread = threading.Thread(target=self._run_async_loop, daemon=True)
         thread.start()
 
+        # 飞书启动播报
+        self.started_at = datetime.now()
+        self.notify_rooms = room_ids
+        notify_start(self.webhook_var.get().strip(), room_ids, interval, output)
+
     def _stop(self):
+        # 飞书停止播报
+        if self.started_at and self.notify_rooms:
+            # 收集各房间最终数据
+            final_stats = {}
+            for m in self.monitors:
+                final_stats[m.room_id] = {
+                    "watched": m._last_watched,
+                    "likes": m._last_likes,
+                }
+            notify_stop(self.webhook_var.get().strip(), self.notify_rooms,
+                       self.started_at, final_stats)
+
         self._log("正在停止监控...")
         for m in self.monitors:
             m.stop()

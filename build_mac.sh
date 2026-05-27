@@ -6,13 +6,12 @@ set -e
 
 echo "=== Nook's Live Monitor - Mac 打包 ==="
 
-# 确保 Python 3.12+ 和依赖
 PYTHON=$(which python3.12 2>/dev/null || which python3)
 echo "Python: $PYTHON ($($PYTHON --version))"
 
 echo "安装依赖..."
-$PYTHON -m pip install --break-system-packages bilibili-api-python pyinstaller 2>/dev/null || \
-$PYTHON -m pip install bilibili-api-python pyinstaller
+$PYTHON -m pip install --break-system-packages bilibili-api-python aiohttp pyinstaller 2>/dev/null || \
+$PYTHON -m pip install bilibili-api-python aiohttp pyinstaller
 
 echo "开始打包..."
 $PYTHON -m PyInstaller \
@@ -20,6 +19,12 @@ $PYTHON -m PyInstaller \
     --windowed \
     --name "NookLiveMonitor" \
     --add-data "live_monitor_core.py:." \
+    --hidden-import "aiohttp" \
+    --hidden-import "aiohttp.client" \
+    --hidden-import "aiohttp.client_ws" \
+    --hidden-import "aiohttp.cookiejar" \
+    --hidden-import "yarl" \
+    --hidden-import "multidict" \
     --clean \
     --noconfirm \
     live_monitor_gui.py

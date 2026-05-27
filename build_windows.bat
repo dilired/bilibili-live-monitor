@@ -5,7 +5,7 @@ echo === Nook's Live Monitor - Windows 打包 ===
 echo.
 
 echo 安装依赖...
-pip install bilibili-api-python pyinstaller
+pip install bilibili-api-python aiohttp pyinstaller
 
 echo.
 echo 开始打包...
@@ -14,6 +14,12 @@ python -m PyInstaller ^
     --windowed ^
     --name "NookLiveMonitor" ^
     --add-data "live_monitor_core.py;." ^
+    --hidden-import "aiohttp" ^
+    --hidden-import "aiohttp.client" ^
+    --hidden-import "aiohttp.client_ws" ^
+    --hidden-import "aiohttp.cookiejar" ^
+    --hidden-import "yarl" ^
+    --hidden-import "multidict" ^
     --clean ^
     --noconfirm ^
     live_monitor_gui.py

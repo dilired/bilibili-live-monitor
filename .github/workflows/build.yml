@@ -6,6 +6,12 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build-mac:
     runs-on: macos-latest
@@ -19,7 +25,7 @@ jobs:
       - name: Install dependencies
         run: |
           brew install python-tk@3.12
-          pip install bilibili-api-python pyinstaller
+          pip install bilibili-api-python aiohttp pyinstaller
 
       - name: Build
         run: |
@@ -28,6 +34,12 @@ jobs:
             --windowed \
             --name "NookLiveMonitor" \
             --add-data "live_monitor_core.py:." \
+            --hidden-import "aiohttp" \
+            --hidden-import "aiohttp.client" \
+            --hidden-import "aiohttp.client_ws" \
+            --hidden-import "aiohttp.cookiejar" \
+            --hidden-import "yarl" \
+            --hidden-import "multidict" \
             --clean \
             --noconfirm \
             live_monitor_gui.py
@@ -52,7 +64,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install bilibili-api-python pyinstaller
+        run: pip install bilibili-api-python aiohttp pyinstaller
 
       - name: Build
         run: |
@@ -61,6 +73,12 @@ jobs:
             --windowed `
             --name "NookLiveMonitor" `
             --add-data "live_monitor_core.py;." `
+            --hidden-import "aiohttp" `
+            --hidden-import "aiohttp.client" `
+            --hidden-import "aiohttp.client_ws" `
+            --hidden-import "aiohttp.cookiejar" `
+            --hidden-import "yarl" `
+            --hidden-import "multidict" `
             --clean `
             --noconfirm `
             live_monitor_gui.py
@@ -74,8 +92,6 @@ jobs:
     needs: [build-mac, build-windows]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
-    permissions:
-      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:

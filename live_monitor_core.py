@@ -77,7 +77,10 @@ class LiveMonitor:
             except Exception as e:
                 if self.on_error:
                     self.on_error(self.room_id, str(e))
-                await asyncio.sleep(self.interval)
+                for _ in range(self.interval):
+                    if not self._running:
+                        return
+                    await asyncio.sleep(1)
                 continue
 
             room_info = info.get("room_info", {})
@@ -136,7 +139,11 @@ class LiveMonitor:
             self._last_watched = watched_num
             self._last_likes = total_likes
 
-            await asyncio.sleep(self.interval)
+            # 可中断的 sleep：每秒检查一次 _running，响应停止指令
+            for _ in range(self.interval):
+                if not self._running:
+                    return
+                await asyncio.sleep(1)
 
     def stop(self):
         self._running = False

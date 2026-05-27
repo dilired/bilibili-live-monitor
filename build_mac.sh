@@ -19,10 +19,8 @@ $PYTHON -m PyInstaller \
     --windowed \
     --name "NookLiveMonitor" \
     --add-data "live_monitor_core.py:." \
+    --collect-submodules "bilibili_api" \
     --hidden-import "aiohttp" \
-    --hidden-import "aiohttp.client" \
-    --hidden-import "aiohttp.client_ws" \
-    --hidden-import "aiohttp.cookiejar" \
     --hidden-import "yarl" \
     --hidden-import "multidict" \
     --clean \

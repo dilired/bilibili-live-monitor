@@ -6,10 +6,16 @@ import asyncio
 import json
 import os
 import queue
+import sys
 import threading
 import tkinter as tk
 from datetime import datetime
 from tkinter import filedialog, messagebox, ttk
+
+# PyInstaller 打包后需在导入 bilibili_api 之前设置 SSL 证书路径
+import certifi
+os.environ['SSL_CERT_FILE'] = certifi.where()
+os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 
 from bilibili_api import Credential
 

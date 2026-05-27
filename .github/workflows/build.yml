@@ -25,7 +25,7 @@ jobs:
       - name: Install dependencies
         run: |
           brew install python-tk@3.12
-          pip install bilibili-api-python aiohttp pyinstaller
+          pip install bilibili-api-python aiohttp certifi pyinstaller
 
       - name: Build
         run: |
@@ -63,7 +63,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install bilibili-api-python aiohttp pyinstaller
+        run: pip install bilibili-api-python aiohttp certifi pyinstaller
 
       - name: Build
         run: |

@@ -6,7 +6,14 @@
 
 import argparse
 import asyncio
+import os
 from datetime import datetime
+
+# PyInstaller 打包后需在导入 bilibili_api 之前设置 SSL 证书路径
+import certifi
+os.environ['SSL_CERT_FILE'] = certifi.where()
+os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
+
 from bilibili_api import Credential
 from live_monitor_core import LiveMonitor, resolve_output_path
 

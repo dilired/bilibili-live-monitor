@@ -4,6 +4,12 @@ import asyncio
 import csv
 import os
 from datetime import datetime
+
+# PyInstaller 打包后 SSL 证书需显式指定
+import certifi
+os.environ['SSL_CERT_FILE'] = certifi.where()
+os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
+
 from bilibili_api import live, Credential
 
 OFFLINE_TIMEOUT = 300  # 下播后 5 分钟仍未开播则退出

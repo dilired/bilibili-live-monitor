@@ -500,6 +500,8 @@ class LiveMonitorGUI:
         stopped_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         started_ts = self.started_at.strftime("%Y-%m-%d %H:%M:%S") if self.started_at else ""
 
+        self._log(f"[调试] _stop called, reason={reason}, started_at={bool(self.started_at)}, webhook={bool(webhook)}, rooms={len(self.room_ids)}, monitors={len(self.monitors)}")
+
         if self.started_at:
             room_info = [(rid, self.room_names.get(rid, ''),
                           self.room_live_start.get(rid, '')) for rid in self.room_ids]
@@ -512,7 +514,11 @@ class LiveMonitorGUI:
                              started_ts, stopped_at, reason,
                              m._last_watched, m._max_likes,
                              self.room_live_start.get(rid, ''))
+            self._log(f"[调试] 正在发送停止播报...")
             notify_stop(webhook, room_info, self.started_at, final_stats)
+            self._log(f"[调试] 停止播报发送完成")
+        else:
+            self._log(f"[调试] 跳过停止播报: started_at 为空")
 
         self._log("正在停止监控...")
         for m in self.monitors.values():

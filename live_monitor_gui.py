@@ -19,7 +19,7 @@ os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 
 from bilibili_api import Credential
 
-from live_monitor_core import LiveMonitor, resolve_output_path, get_anchor_name, record_session, MAX_ROOMS
+from live_monitor_core import LiveMonitor, resolve_output_path, get_room_brief, record_session, MAX_ROOMS
 from live_monitor_notify import notify_start, notify_stop
 
 import matplotlib
@@ -132,6 +132,8 @@ class ACButton(tk.Canvas):
 
 
 class LiveMonitorGUI:
+    CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".bili_live_monitor.json")
+
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("B站直播数据监控")
@@ -147,7 +149,14 @@ class LiveMonitorGUI:
         self.room_names = {}      # room_id -> anchor_name
         self.room_ids = []        # ordered list of active room IDs
 
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._build_ui()
+        self._load_config()
+        # 字段变更自动保存（比依赖窗口关闭事件更可靠）
+        self.room_entry.bind("<FocusOut>", lambda e: self._save_config())
+        self.interval_entry.bind("<FocusOut>", lambda e: self._save_config())
+        self.oe.bind("<FocusOut>", lambda e: self._save_config())
+        self.webhook_entry.bind("<FocusOut>", lambda e: self._save_config())
         self._poll_queue()
 
     # ==================== UI 构建 ====================
@@ -341,15 +350,24 @@ class LiveMonitorGUI:
                                fg=COLORS["primary_dark"], bg=COLORS["white"])
         likes_label.pack(pady=(0, 8))
 
+        # 开播时间
+        live_start_label = tk.Label(f, text="", font=UI_FONT_SMALL,
+                                    fg=COLORS["text_light"], bg=COLORS["card"])
+        live_start_label.pack(anchor="w", padx=10, pady=(0, 6))
+
         # 图表
         fig = Figure(figsize=(7, 2.5), dpi=95, facecolor=COLORS["card"])
         ax = fig.add_subplot(111)
         ax.set_facecolor(COLORS["card"])
         ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
         ax.tick_params(colors=COLORS["text_light"], labelsize=8)
-        ax.set_xlabel("时间", color=COLORS["text_light"], fontsize=8)
-        ax.set_ylabel("观看人数", color=COLORS["text_light"], fontsize=8)
+        ax.set_ylabel("观看人数", color=COLORS["primary_dark"], fontsize=8)
+
+        # 副坐标轴：观众数
+        ax2 = ax.twinx()
+        ax2.set_ylabel("观众数", color=COLORS["accent"], fontsize=8)
+        ax2.tick_params(colors=COLORS["accent"], labelsize=8)
+        ax2.spines['right'].set_color(COLORS["accent"])
 
         canvas_frame = tk.Frame(f, bg=COLORS["card"])
         canvas_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
@@ -359,9 +377,10 @@ class LiveMonitorGUI:
 
         # 存储组件引用
         tab_data = {
-            "frame": f, "fig": fig, "ax": ax, "canvas": canvas,
+            "frame": f, "fig": fig, "ax": ax, "ax2": ax2, "canvas": canvas,
             "pop_label": pop_label, "watched_label": watched_label,
             "likes_label": likes_label,
+            "live_start_label": live_start_label,
         }
         self._tab_data[room_id] = tab_data
 
@@ -426,12 +445,15 @@ class LiveMonitorGUI:
         self._log(f"间隔: {interval}s  |  保存: {output}")
         self._log("=" * 40, "time")
 
-        # 预取主播名（用于飞书播报和 Tab 标题）
+        # 预取主播名和开播时间
+        self.room_live_start = {}  # room_id -> live_start_time str
         for rid in room_ids:
             try:
-                name = asyncio.run(get_anchor_name(rid))
+                name, live_start = asyncio.run(get_room_brief(rid))
                 if name:
                     self.room_names[rid] = name
+                if live_start:
+                    self.room_live_start[rid] = live_start
             except Exception:
                 pass
 
@@ -453,8 +475,10 @@ class LiveMonitorGUI:
         self.thread.start()
 
         # 飞书启动播报 (名字稍后回填)
+        self._save_config()
         self.started_at = datetime.now()
-        room_info = [(rid, self.room_names.get(rid, '')) for rid in room_ids]
+        room_info = [(rid, self.room_names.get(rid, ''),
+                      self.room_live_start.get(rid, '')) for rid in room_ids]
         notify_start(self.webhook_var.get().strip(), room_info, interval, output)
 
     def _stop(self, reason="manual"):
@@ -463,15 +487,17 @@ class LiveMonitorGUI:
         started_ts = self.started_at.strftime("%Y-%m-%d %H:%M:%S") if self.started_at else ""
 
         if self.started_at:
-            room_info = [(rid, self.room_names.get(rid, '')) for rid in self.room_ids]
+            room_info = [(rid, self.room_names.get(rid, ''),
+                          self.room_live_start.get(rid, '')) for rid in self.room_ids]
             final_stats = {}
             for rid, m in self.monitors.items():
-                final_stats[rid] = {"watched": m._last_watched, "likes": m._last_likes}
-                # 记录 session 到 CSV
+                final_stats[rid] = {"watched": m._last_watched, "likes": m._last_likes,
+                                    "audience": m._max_audience}
                 out_dir = os.path.dirname(m.output) or "."
                 record_session(out_dir, rid, self.room_names.get(rid, ''),
                              started_ts, stopped_at, reason,
-                             m._last_watched, m._max_likes)
+                             m._last_watched, m._max_likes,
+                             self.room_live_start.get(rid, ''))
             notify_stop(webhook, room_info, self.started_at, final_stats)
 
         self._log("正在停止监控...")
@@ -604,6 +630,21 @@ class LiveMonitorGUI:
                         td["pop_label"].config(text=data.get("popularity_text", "-"))
                         td["watched_label"].config(text=data.get("watched_num", "-"))
                         td["likes_label"].config(text=data.get("likes", "-"))
+                        # 更新开播时间
+                        lst = data.get("live_start_time", "")
+                        if lst:
+                            try:
+                                dt = datetime.strptime(lst, "%Y-%m-%d %H:%M:%S")
+                                dur = int((datetime.now() - dt).total_seconds())
+                                h, r = divmod(dur, 3600)
+                                m, s = divmod(r, 60)
+                                dur_str = f"{h}时{m}分{s}秒" if h else f"{m}分{s}秒"
+                                td["live_start_label"].config(
+                                    text=f"开播: {lst} | 已播: {dur_str}")
+                            except Exception:
+                                td["live_start_label"].config(text=f"开播: {lst}")
+                        elif not data.get("is_live"):
+                            td["live_start_label"].config(text="已下播")
 
                 elif msg_type == "chart_update":
                     room_id = payload
@@ -626,28 +667,57 @@ class LiveMonitorGUI:
                         y_max = w_max + padding
 
                         ax = td["ax"]
+                        ax2 = td["ax2"]
                         ax.clear()
+                        ax2.clear()
                         ax.set_facecolor(COLORS["card"])
                         ax.spines['top'].set_visible(False)
                         ax.spines['right'].set_visible(False)
 
-                        # 插值平滑：在原始点之间插入更多点，消除阶梯感
+                        # 观众数
+                        audience = [p.get('audience_count', 0) or 0 for p in pts]
+
+                        # 插值平滑
                         x_orig = np.arange(len(watched))
                         x_smooth = np.linspace(0, len(watched)-1, max(len(watched)*3, 20))
                         y_smooth = np.interp(x_smooth, x_orig, watched)
+                        a_smooth = np.interp(x_smooth, x_orig, audience)
 
                         ax.plot(x_smooth, y_smooth, color=COLORS["primary"],
                                 linewidth=2.5, solid_capstyle='round',
-                                solid_joinstyle='round')
+                                solid_joinstyle='round', label='看过人数')
                         ax.fill_between(x_smooth, y_smooth, alpha=0.08,
                                         color=COLORS["primary"])
                         ax.set_ylim(y_min, y_max)
                         ax.tick_params(colors=COLORS["text_light"], labelsize=8)
+                        ax.set_ylabel("看过人数", color=COLORS["primary_dark"], fontsize=8)
+
+                        # 副轴：观众数
+                        if any(a > 0 for a in audience):
+                            a_max = max(audience)
+                            a_min = min(a for a in audience if a > 0) if any(a > 0 for a in audience) else 0
+                            a_range = a_max - a_min
+                            a_pad = max(a_range * 0.3, 5) if a_range > 0 else 10
+                            ax2.set_ylim(max(0, a_min - a_pad), a_max + a_pad)
+
+                        ax2.plot(x_smooth, a_smooth, color=COLORS["accent"],
+                                 linewidth=2, linestyle='--', label='观众数')
+                        ax2.tick_params(colors=COLORS["accent"], labelsize=8)
+                        ax2.set_ylabel("观众数", color=COLORS["accent"], fontsize=8)
+
+                        # x 轴
                         step = max(1, len(times) // 5)
                         ax.set_xticks(range(0, len(times), step))
                         ax.set_xticklabels([times[i] for i in range(0, len(times), step)],
                                            fontsize=7)
-                        ax.set_ylabel("观看人数", color=COLORS["text_light"], fontsize=8)
+
+                        # 图例
+                        lines1, labels1 = ax.get_legend_handles_labels()
+                        lines2, labels2 = ax2.get_legend_handles_labels()
+                        ax.legend(lines1 + lines2, labels1 + labels2,
+                                  loc='upper left', fontsize=7,
+                                  facecolor=COLORS["card"], edgecolor=COLORS["card_border"])
+
                         td["fig"].tight_layout()
                         td["canvas"].draw()
 
@@ -664,6 +734,16 @@ class LiveMonitorGUI:
                 elif msg_type == "offline_end":
                     room_id = payload
                     self._log(f"[房间{room_id}] 下播超过 5 分钟，停止监控", "offline")
+                    # 记录 session
+                    m = self.monitors.get(room_id)
+                    if m and self.started_at:
+                        out_dir = os.path.dirname(m.output) or "."
+                        record_session(out_dir, room_id,
+                                     self.room_names.get(room_id, ''),
+                                     self.started_at.strftime("%Y-%m-%d %H:%M:%S"),
+                                     datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                     "offline", m._last_watched, m._max_likes,
+                                     self.room_live_start.get(room_id, ''))
 
                 elif msg_type == "relive":
                     room_id = payload
@@ -707,6 +787,37 @@ class LiveMonitorGUI:
             pass
 
         self.root.after(300, self._poll_queue)
+
+    def _load_config(self):
+        try:
+            with open(self.CONFIG_FILE, "r") as f:
+                cfg = json.load(f)
+            self.room_entry.delete(0, "end")
+            self.room_entry.insert(0, cfg.get("rooms", "13308358"))
+            self.output_var.set(cfg.get("output", "./data/"))
+            self.webhook_var.set(cfg.get("webhook", ""))
+            self.interval_var.set(str(cfg.get("interval", 60)))
+        except Exception:
+            pass
+
+    def _save_config(self):
+        try:
+            cfg = {
+                "rooms": self.room_entry.get().strip(),
+                "output": self.output_var.get().strip(),
+                "webhook": self.webhook_var.get().strip(),
+                "interval": self.interval_var.get().strip(),
+            }
+            with open(self.CONFIG_FILE, "w") as f:
+                json.dump(cfg, f, indent=2)
+        except Exception:
+            pass
+
+    def _on_close(self):
+        self._save_config()
+        if self.running:
+            self._stop(reason="manual")
+        self.root.destroy()
 
     def _on_all_stopped(self):
         if self.running:

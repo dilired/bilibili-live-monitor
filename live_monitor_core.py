@@ -19,7 +19,7 @@ MAX_ROOMS = 10           # 同时监控房间数上限
 
 def record_session(output_dir: str, room_id: int, anchor_name: str,
                    started_at: str, ended_at: str, end_reason: str,
-                   final_watched, max_likes: int):
+                   final_watched, max_likes: int, live_start: str = ""):
     """记录一次监控 session 到 sessions.csv（追加模式）"""
     path = os.path.join(output_dir, "sessions.csv")
     existed = os.path.exists(path)
@@ -30,9 +30,10 @@ def record_session(output_dir: str, room_id: int, anchor_name: str,
             if not existed:
                 writer.writerow(["session_start", "session_end", "room_id",
                                  "anchor_name", "end_reason",
-                                 "final_watched", "max_likes"])
+                                 "final_watched", "max_likes", "live_start"])
             writer.writerow([started_at, ended_at, room_id, anchor_name or '',
-                             end_reason, final_watched or '', max_likes or ''])
+                             end_reason, final_watched or '', max_likes or '',
+                             live_start])
     except PermissionError:
         pass
 
@@ -57,6 +58,16 @@ async def get_anchor_name(room_id: int) -> str:
     return info.get('anchor_info', {}).get('base_info', {}).get('uname', '')
 
 
+async def get_room_brief(room_id: int) -> tuple:
+    """获取主播名和开播时间"""
+    room = live.LiveRoom(room_display_id=room_id)
+    info = await room.get_room_info()
+    name = info.get('anchor_info', {}).get('base_info', {}).get('uname', '')
+    live_ts = info.get('room_info', {}).get('live_start_time', 0)
+    live_start = datetime.fromtimestamp(live_ts).strftime("%Y-%m-%d %H:%M:%S") if live_ts else ""
+    return name, live_start
+
+
 def sanitize_filename(name: str) -> str:
     """去除文件名中的不安全字符"""
     name = re.sub(r'[<>:"/\\|?*\n\r\t]', '', name)
@@ -71,10 +82,12 @@ def ensure_csv(path: str):
         with _open_with_retry(path, "w") as f:
             writer = csv.writer(f)
             writer.writerow(["timestamp", "room_id", "popularity", "popularity_text",
-                             "watched_num", "watched_text", "likes"])
+                             "watched_num", "watched_text", "likes", "audience_count",
+                             "live_start_time"])
 
 
-def write_row(path: str, room_id: int, popularity: dict, watched: dict, like_info: dict):
+def write_row(path: str, room_id: int, popularity: dict, watched: dict,
+              like_info: dict, live_start: str = "", audience_count=0):
     """流式追加一行（重试防 Windows 文件锁）"""
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     try:
@@ -87,6 +100,8 @@ def write_row(path: str, room_id: int, popularity: dict, watched: dict, like_inf
                 watched.get("num", ""),
                 watched.get("text_large", ""),
                 like_info.get("total_likes", ""),
+                audience_count,
+                live_start,
             ])
     except PermissionError:
         return False  # Windows 文件被锁
@@ -114,9 +129,12 @@ class LiveMonitor:
         self.interval = interval
         self.credential = credential
         self.anchor_name = ''       # 主播名，启动后获取
+        self.live_start_time = ''   # 开播时间（格式化字符串）
         self._running = False
         self._last_watched = None
         self._last_likes = None
+        self._last_audience = 0
+        self._max_audience = 0
         self._max_likes = 0
         self._offline_seconds = 0
         self._was_live = True
@@ -181,6 +199,22 @@ class LiveMonitor:
             live_status = room_info.get("live_status", 1)
             is_live = (live_status == 1)
 
+            # 开播时间
+            live_ts = room_info.get("live_start_time", 0)
+            if live_ts:
+                self.live_start_time = datetime.fromtimestamp(live_ts).strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                self.live_start_time = ""
+
+            # 房间观众数（真实在线人数）
+            try:
+                audience_count = (info.get('room_rank_info', {})
+                                  .get('user_rank_entry', {})
+                                  .get('user_contribution_rank_entry', {})
+                                  .get('count', 0))
+            except Exception:
+                audience_count = 0
+
             # 下播处理
             if not is_live:
                 if self._was_live and self.on_offline:
@@ -194,6 +228,9 @@ class LiveMonitor:
             else:
                 if not self._was_live and self.on_relive:
                     self.on_relive(self.room_id)
+                    self.buffer.clear()
+                    self._max_audience = 0  # 重置峰值
+                    self._max_likes = 0
                 self._offline_seconds = 0
             self._was_live = is_live
 
@@ -205,7 +242,8 @@ class LiveMonitor:
             total_likes = like_info.get("total_likes", 0)
 
             # 写 CSV（带失败追踪，连续 5 次失败则日志+飞书提醒一次）
-            if write_row(self.output, self.room_id, popularity, watched, like_info):
+            if write_row(self.output, self.room_id, popularity, watched, like_info,
+                         self.live_start_time, audience_count):
                 self._write_fail_count = 0
                 self._write_blocked_notified = False
             else:
@@ -226,7 +264,9 @@ class LiveMonitor:
                 "watched_num": watched_num,
                 "watched_text": watched.get("text_large", "N/A"),
                 "likes": total_likes,
+                "audience_count": audience_count,
                 "is_live": is_live,
+                "live_start_time": self.live_start_time,
             }
             if self.on_data:
                 self.on_data(self.room_id, data)
@@ -246,6 +286,9 @@ class LiveMonitor:
 
             self._last_watched = watched_num
             self._last_likes = total_likes
+            self._last_audience = audience_count
+            if audience_count and audience_count > self._max_audience:
+                self._max_audience = audience_count
             if total_likes and total_likes > self._max_likes:
                 self._max_likes = total_likes
 

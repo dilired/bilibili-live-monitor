@@ -21,7 +21,7 @@ def record_session(output_dir: str, room_id: int, anchor_name: str,
                    started_at: str, ended_at: str, end_reason: str,
                    final_watched, max_likes: int, live_start: str = ""):
     """记录一次监控 session 到 sessions.csv（追加模式）"""
-    path = os.path.join(output_dir, "sessions.csv")
+    path = os.path.join(output_dir, "sessions_v2.csv")
     existed = os.path.exists(path)
     os.makedirs(output_dir, exist_ok=True)
     try:
@@ -167,7 +167,7 @@ class LiveMonitor:
                 self.anchor_name = uname
                 safe_name = sanitize_filename(uname)
                 output_dir = os.path.dirname(self.output) or '.'
-                self.output = os.path.join(output_dir, f"live_{self.room_id}_{safe_name}.csv")
+                self.output = os.path.join(output_dir, f"live_{self.room_id}_{safe_name}_v2.csv")
                 if self.on_name:
                     self.on_name(self.room_id, uname)
         except Exception:

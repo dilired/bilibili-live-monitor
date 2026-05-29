@@ -147,6 +147,7 @@ class LiveMonitorGUI:
         self.msg_queue = queue.Queue()
         self.started_at = None
         self.room_names = {}      # room_id -> anchor_name
+        self.room_live_start = {} # room_id -> live_start_time
         self.room_ids = []        # ordered list of active room IDs
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -343,12 +344,22 @@ class LiveMonitorGUI:
         # 点赞卡片
         c3 = tk.Frame(cards, bg=COLORS["white"], highlightbackground=COLORS["card_border"],
                       highlightthickness=1)
-        c3.pack(side="left", fill="x", expand=True)
+        c3.pack(side="left", fill="x", expand=True, padx=(0, 6))
         tk.Label(c3, text="点赞数", font=UI_FONT_SMALL,
                  fg=COLORS["text_light"], bg=COLORS["white"]).pack(pady=(8, 0))
         likes_label = tk.Label(c3, text="-", font=UI_FONT_CARD,
                                fg=COLORS["primary_dark"], bg=COLORS["white"])
         likes_label.pack(pady=(0, 8))
+
+        # 观众数卡片
+        c4 = tk.Frame(cards, bg=COLORS["white"], highlightbackground=COLORS["card_border"],
+                      highlightthickness=1)
+        c4.pack(side="left", fill="x", expand=True)
+        tk.Label(c4, text="实时观众", font=UI_FONT_SMALL,
+                 fg=COLORS["text_light"], bg=COLORS["white"]).pack(pady=(8, 0))
+        audience_label = tk.Label(c4, text="-", font=UI_FONT_CARD,
+                                  fg=COLORS["accent"], bg=COLORS["white"])
+        audience_label.pack(pady=(0, 8))
 
         # 开播时间
         live_start_label = tk.Label(f, text="", font=UI_FONT_SMALL,
@@ -363,8 +374,10 @@ class LiveMonitorGUI:
         ax.tick_params(colors=COLORS["text_light"], labelsize=8)
         ax.set_ylabel("观看人数", color=COLORS["primary_dark"], fontsize=8)
 
-        # 副坐标轴：观众数
+        # 副坐标轴：观众数（右侧）
         ax2 = ax.twinx()
+        ax2.yaxis.set_label_position("right")
+        ax2.yaxis.tick_right()
         ax2.set_ylabel("观众数", color=COLORS["accent"], fontsize=8)
         ax2.tick_params(colors=COLORS["accent"], labelsize=8)
         ax2.spines['right'].set_color(COLORS["accent"])
@@ -380,6 +393,7 @@ class LiveMonitorGUI:
             "frame": f, "fig": fig, "ax": ax, "ax2": ax2, "canvas": canvas,
             "pop_label": pop_label, "watched_label": watched_label,
             "likes_label": likes_label,
+            "audience_label": audience_label,
             "live_start_label": live_start_label,
         }
         self._tab_data[room_id] = tab_data
@@ -622,6 +636,7 @@ class LiveMonitorGUI:
                         f"[房间{room_id}] "
                         f"人气: {data['popularity_text']} | "
                         f"看过: {data['watched_text']} (num={data['watched_num']}) | "
+                        f"观众: {data.get('audience_count', '-')} | "
                         f"点赞: {data['likes']}"
                     )
                     # 更新卡片
@@ -630,6 +645,7 @@ class LiveMonitorGUI:
                         td["pop_label"].config(text=data.get("popularity_text", "-"))
                         td["watched_label"].config(text=data.get("watched_num", "-"))
                         td["likes_label"].config(text=data.get("likes", "-"))
+                        td["audience_label"].config(text=data.get("audience_count", "-"))
                         # 更新开播时间
                         lst = data.get("live_start_time", "")
                         if lst:
@@ -702,8 +718,10 @@ class LiveMonitorGUI:
 
                         ax2.plot(x_smooth, a_smooth, color=COLORS["accent"],
                                  linewidth=2, linestyle='--', label='观众数')
-                        ax2.tick_params(colors=COLORS["accent"], labelsize=8)
                         ax2.set_ylabel("观众数", color=COLORS["accent"], fontsize=8)
+                        ax2.yaxis.set_label_position("right")
+                        ax2.yaxis.tick_right()
+                        ax2.tick_params(colors=COLORS["accent"], labelsize=8)
 
                         # x 轴
                         step = max(1, len(times) // 5)

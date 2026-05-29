@@ -514,9 +514,12 @@ class LiveMonitorGUI:
                              started_ts, stopped_at, reason,
                              m._last_watched, m._max_likes,
                              self.room_live_start.get(rid, ''))
-            self._log(f"[调试] 正在发送停止播报...")
-            notify_stop(webhook, room_info, self.started_at, final_stats)
-            self._log(f"[调试] 停止播报发送完成")
+            self._log(f"[调试] 正在发送停止播报, webhook={webhook[:30]}...")
+            try:
+                notify_stop(webhook, room_info, self.started_at, final_stats)
+                self._log(f"[调试] 停止播报发送完成")
+            except Exception as e:
+                self._log(f"[调试] 停止播报异常: {e}", "offline")
         else:
             self._log(f"[调试] 跳过停止播报: started_at 为空")
 

@@ -31,7 +31,9 @@ def _send_card(webhook_url: str, header_text: str, header_color: str, content_li
         url=webhook_url, data=json.dumps(body).encode(),
         headers={"Content-Type": "application/json"}, method="POST",
     )
-    urllib.request.urlopen(req, timeout=10)
+    resp = urllib.request.urlopen(req, timeout=10)
+    if resp.status != 200:
+        raise RuntimeError(f"HTTP {resp.status}: {resp.read().decode()[:200]}")
 
 
 def _duration_str(seconds: int) -> str:

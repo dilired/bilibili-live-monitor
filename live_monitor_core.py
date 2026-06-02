@@ -137,6 +137,7 @@ class LiveMonitor:
         self._max_audience = 0
         self._max_likes = 0
         self._ws_watched = None      # WS 修正: {"num": int, "text_large": str, "text_small": str}
+        self._ws_ready = asyncio.Event()  # WS 首次数据就绪信号
         self._offline_seconds = 0
         self._was_live = True
         self._error_count = 0
@@ -178,6 +179,12 @@ class LiveMonitor:
 
         # 启动 WebSocket 连接（优先获取真实看过人数）
         ws_task = asyncio.create_task(self._run_ws())
+
+        # 等待 WS 首次数据到达再开始轮询，避免首条 CSV 写入 HTTP 假值
+        try:
+            await asyncio.wait_for(self._ws_ready.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            pass
 
         try:
             while self._running:
@@ -236,6 +243,7 @@ class LiveMonitor:
                         self._max_audience = 0
                         self._max_likes = 0
                         self._ws_watched = None  # 重开播后重置 WS 缓存
+                        self._ws_ready.clear()
                     self._offline_seconds = 0
                 self._was_live = is_live
 
@@ -351,6 +359,7 @@ class LiveMonitor:
                 "text_large": inner_data.get("text_large", ""),
                 "text_small": inner_data.get("text_small", ""),
             }
+            self._ws_ready.set()
 
     def stop(self):
         self._running = False

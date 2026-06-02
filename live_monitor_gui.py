@@ -20,7 +20,7 @@ os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 from bilibili_api import Credential
 
 from live_monitor_core import LiveMonitor, resolve_output_path, get_room_brief, record_session, MAX_ROOMS
-from live_monitor_notify import notify_start, notify_stop
+from live_monitor_notify import notify_start, notify_stop, notify_add_room
 
 import matplotlib
 matplotlib.use('TkAgg')
@@ -143,6 +143,7 @@ class LiveMonitorGUI:
 
         self.running = False
         self.monitors = {}        # room_id -> LiveMonitor
+        self._active_count = 0    # 仍在运行的 monitor 数量 (归零=全部下播)
         self.thread = None
         self.msg_queue = queue.Queue()
         self.started_at = None
@@ -442,6 +443,7 @@ class LiveMonitorGUI:
         self.room_names = {}
         self.monitors = {}
         self._tab_data = {}
+        self._active_count = len(room_ids)
 
         # 创建所有 Tab
         for rid in room_ids:
@@ -496,6 +498,8 @@ class LiveMonitorGUI:
         notify_start(self.webhook_var.get().strip(), room_info, interval, output)
 
     def _stop(self, reason="manual"):
+        if not self.running:
+            return
         webhook = self.webhook_var.get().strip()
         stopped_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         started_ts = self.started_at.strftime("%Y-%m-%d %H:%M:%S") if self.started_at else ""
@@ -572,21 +576,42 @@ class LiveMonitorGUI:
         m.on_name = self._on_name
         m.on_write_blocked = self._on_write_blocked
         self.monitors[new_id] = m
+        self._active_count += 1
 
-        # 在新线程中启动 (join 到现有 gather)
+        # 在新线程中启动
         t = threading.Thread(target=self._run_single_monitor, args=(m,), daemon=True)
         t.start()
 
+        # 获取主播名和开播时间用于飞书通知
+        try:
+            aname, live_start = asyncio.run(get_room_brief(new_id))
+            if aname:
+                self.room_names[new_id] = aname
+        except Exception:
+            pass
+
         self._log(f"[+] 动态添加房间 {new_id}")
         self.room_count_label.config(text=f"房间: {len(self.room_ids)}  |  间隔: {interval}s")
+
+        # 飞书通知
+        notify_add_room(self.webhook_var.get().strip(), new_id,
+                        self.room_names.get(new_id, ""),
+                        self.room_live_start.get(new_id, ""))
 
     def _run_async_loop(self):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            loop.run_until_complete(
-                asyncio.gather(*[m.run() for m in self.monitors.values()])
-            )
+            async def _wrap(m):
+                try:
+                    await m.run()
+                except Exception as e:
+                    self.msg_queue.put(("error", f"房间{m.room_id}异常: {e}"))
+                finally:
+                    self.msg_queue.put(("monitor_done", m.room_id))
+
+            tasks = [loop.create_task(_wrap(m)) for m in self.monitors.values()]
+            loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
         except Exception as e:
             self.msg_queue.put(("error", f"监控异常: {e}"))
         finally:
@@ -602,6 +627,7 @@ class LiveMonitorGUI:
             self.msg_queue.put(("error", f"房间{monitor.room_id}异常: {e}"))
         finally:
             loop.close()
+            self.msg_queue.put(("monitor_done", monitor.room_id))
 
     # ==================== 回调 ====================
 
@@ -807,8 +833,15 @@ class LiveMonitorGUI:
                     except Exception:
                         pass
 
+                elif msg_type == "monitor_done":
+                    self._active_count -= 1
+                    if self._active_count <= 0 and self.running:
+                        self.root.after(0, lambda: self._stop(reason="offline"))
+
                 elif msg_type == "stopped":
-                    self.root.after(0, self._on_all_stopped)
+                    # async loop 线程已退出；如果还有活跃 monitor 则等它们
+                    if self._active_count <= 0 and self.running:
+                        self.root.after(0, self._on_all_stopped)
 
         except queue.Empty:
             pass

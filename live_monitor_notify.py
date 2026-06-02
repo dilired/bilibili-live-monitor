@@ -102,3 +102,29 @@ def notify_stop(webhook_url: str, room_info: list, started_at: datetime,
             f"**运行时长：** {dur_str}",
             f"**监控结果：**\n{room_str}",
         ])
+
+
+def notify_add_room(webhook_url: str, room_id: int, anchor_name: str = "",
+                    live_start: str = ""):
+    """动态添加房间播报"""
+    if not webhook_url:
+        return
+    label = anchor_name or f"房间 {room_id}"
+    extra = ""
+    if live_start:
+        try:
+            dt = datetime.strptime(live_start, "%Y-%m-%d %H:%M:%S")
+            dur = int((datetime.now() - dt).total_seconds())
+            h, r = divmod(dur, 3600)
+            m, s = divmod(r, 60)
+            dur_str = f"{h}时{m}分{s}秒" if h else f"{m}分{s}秒"
+            extra = f"｜已播 {dur_str}"
+        except Exception:
+            extra = f"｜开播 {live_start}"
+    _send_card(webhook_url,
+        header_text="➕ 已添加监控房间",
+        header_color="blue",
+        content_lines=[
+            f"**房间：** {label}（{room_id}）{extra}",
+            f"**添加时间：** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        ])

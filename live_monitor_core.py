@@ -136,6 +136,7 @@ class LiveMonitor:
         self._last_audience = 0
         self._max_audience = 0
         self._max_likes = 0
+        self._ws_watched = None      # WS 修正: {"num": int, "text_large": str, "text_small": str}
         self._offline_seconds = 0
         self._was_live = True
         self._error_count = 0
@@ -155,7 +156,7 @@ class LiveMonitor:
         self.on_write_blocked = None   # (room_id) -> None  CSV被锁
 
     async def run(self):
-        """异步轮询循环，直到停止或超时下播"""
+        """异步轮询循环（HTTP）+ WebSocket 看过人数修正"""
         room = live.LiveRoom(room_display_id=self.room_id, credential=self.credential)
         self._running = True
 
@@ -175,128 +176,181 @@ class LiveMonitor:
 
         ensure_csv(self.output)
 
-        while self._running:
-            try:
-                info = await room.get_room_info()
-            except Exception as e:
-                self._error_count += 1
-                now = datetime.now()
-                # 连续错误发生时，最多每 30 秒上报一次，避免刷屏卡 UI
-                if self._last_error_time is None or \
-                   (now - self._last_error_time).total_seconds() >= 30:
-                    if self.on_error:
-                        repeat = f" (已连续失败 {self._error_count} 次)" if self._error_count > 1 else ""
-                        self.on_error(self.room_id, str(e) + repeat)
-                    self._last_error_time = now
-                    self._error_count = 0
+        # 启动 WebSocket 连接（优先获取真实看过人数）
+        ws_task = asyncio.create_task(self._run_ws())
+
+        try:
+            while self._running:
+                try:
+                    info = await room.get_room_info()
+                except Exception as e:
+                    self._error_count += 1
+                    now = datetime.now()
+                    if self._last_error_time is None or \
+                       (now - self._last_error_time).total_seconds() >= 30:
+                        if self.on_error:
+                            repeat = f" (已连续失败 {self._error_count} 次)" if self._error_count > 1 else ""
+                            self.on_error(self.room_id, str(e) + repeat)
+                        self._last_error_time = now
+                        self._error_count = 0
+                    for _ in range(self.interval):
+                        if not self._running:
+                            return
+                        await asyncio.sleep(1)
+                    continue
+
+                room_info = info.get("room_info", {})
+                live_status = room_info.get("live_status", 1)
+                is_live = (live_status == 1)
+
+                # 开播时间
+                live_ts = room_info.get("live_start_time", 0)
+                if live_ts:
+                    self.live_start_time = datetime.fromtimestamp(live_ts).strftime("%Y-%m-%d %H:%M:%S")
+                else:
+                    self.live_start_time = ""
+
+                # 房间观众数（真实在线人数）
+                try:
+                    audience_count = (info.get('room_rank_info', {})
+                                      .get('user_rank_entry', {})
+                                      .get('user_contribution_rank_entry', {})
+                                      .get('count', 0))
+                except Exception:
+                    audience_count = 0
+
+                # 下播处理
+                if not is_live:
+                    if self._was_live and self.on_offline:
+                        self.on_offline(self.room_id, 0)
+                        self._offline_seconds = 0
+                    self._offline_seconds += self.interval
+                    if self._offline_seconds >= OFFLINE_TIMEOUT:
+                        if self.on_offline_end:
+                            self.on_offline_end(self.room_id)
+                        return
+                else:
+                    if not self._was_live and self.on_relive:
+                        self.on_relive(self.room_id)
+                        self.buffer.clear()
+                        self._max_audience = 0
+                        self._max_likes = 0
+                        self._ws_watched = None  # 重开播后重置 WS 缓存
+                    self._offline_seconds = 0
+                self._was_live = is_live
+
+                popularity = info.get("popularity", {})
+                http_watched = info.get("watched_show", {})
+                like_info = info.get("like_info_v3", {})
+
+                # 看过人数: WS 优先（真实值），HTTP 兜底
+                if self._ws_watched:
+                    watched_num = self._ws_watched["num"]
+                    watched_text = self._ws_watched.get("text_large", "N/A")
+                    write_watched = self._ws_watched
+                else:
+                    watched_num = http_watched.get("num")
+                    watched_text = http_watched.get("text_large", "N/A")
+                    write_watched = http_watched
+
+                total_likes = like_info.get("total_likes", 0)
+
+                # 写 CSV
+                if write_row(self.output, self.room_id, popularity, write_watched, like_info,
+                             self.live_start_time, audience_count):
+                    self._write_fail_count = 0
+                    self._write_blocked_notified = False
+                else:
+                    self._write_fail_count += 1
+                    if self._write_fail_count >= 5:
+                        msg = f"CSV 写入持续失败，请检查文件是否被其他程序打开 ({self.output})"
+                        if self.on_error:
+                            self.on_error(self.room_id, msg)
+                        if not self._write_blocked_notified and self.on_write_blocked:
+                            self.on_write_blocked(self.room_id)
+                            self._write_blocked_notified = True
+
+                # 数据回调
+                data = {
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "popularity": popularity.get("popularity"),
+                    "popularity_text": popularity.get("popularity_text", "N/A"),
+                    "watched_num": watched_num,
+                    "watched_text": watched_text,
+                    "likes": total_likes,
+                    "audience_count": audience_count,
+                    "is_live": is_live,
+                    "live_start_time": self.live_start_time,
+                }
+                if self.on_data:
+                    self.on_data(self.room_id, data)
+
+                self.buffer.append(data)
+
+                # 变化检测
+                if self._last_watched is not None and watched_num != self._last_watched:
+                    if self.on_change:
+                        self.on_change(self.room_id, "watched", self._last_watched,
+                                       watched_num, watched_num - self._last_watched)
+                if self._last_likes is not None and total_likes != self._last_likes:
+                    if self.on_change:
+                        self.on_change(self.room_id, "likes", self._last_likes,
+                                       total_likes, total_likes - self._last_likes)
+
+                self._last_watched = watched_num
+                self._last_likes = total_likes
+                self._last_audience = audience_count
+                if audience_count and audience_count > self._max_audience:
+                    self._max_audience = audience_count
+                if total_likes and total_likes > self._max_likes:
+                    self._max_likes = total_likes
+
+                # 可中断的 sleep
                 for _ in range(self.interval):
                     if not self._running:
                         return
                     await asyncio.sleep(1)
-                continue
-
-            room_info = info.get("room_info", {})
-            live_status = room_info.get("live_status", 1)
-            is_live = (live_status == 1)
-
-            # 开播时间
-            live_ts = room_info.get("live_start_time", 0)
-            if live_ts:
-                self.live_start_time = datetime.fromtimestamp(live_ts).strftime("%Y-%m-%d %H:%M:%S")
-            else:
-                self.live_start_time = ""
-
-            # 房间观众数（真实在线人数）
+        finally:
+            ws_task.cancel()
             try:
-                audience_count = (info.get('room_rank_info', {})
-                                  .get('user_rank_entry', {})
-                                  .get('user_contribution_rank_entry', {})
-                                  .get('count', 0))
-            except Exception:
-                audience_count = 0
+                await ws_task
+            except asyncio.CancelledError:
+                pass
 
-            # 下播处理
-            if not is_live:
-                if self._was_live and self.on_offline:
-                    self.on_offline(self.room_id, 0)
-                    self._offline_seconds = 0
-                self._offline_seconds += self.interval
-                if self._offline_seconds >= OFFLINE_TIMEOUT:
-                    if self.on_offline_end:
-                        self.on_offline_end(self.room_id)
-                    return
-            else:
-                if not self._was_live and self.on_relive:
-                    self.on_relive(self.room_id)
-                    self.buffer.clear()
-                    self._max_audience = 0  # 重置峰值
-                    self._max_likes = 0
-                self._offline_seconds = 0
-            self._was_live = is_live
+    async def _run_ws(self):
+        """WebSocket 连接管理：持续接收 WATCHED_CHANGE，断线自动重连"""
+        while self._running:
+            dm = None
+            try:
+                dm = live.LiveDanmaku(
+                    room_display_id=self.room_id,
+                    credential=self.credential,
+                )
+                dm.add_event_listener("WATCHED_CHANGE", self._on_ws_watched)
+                await dm.connect()
+            except Exception as e:
+                if self._running and self.on_error:
+                    self.on_error(self.room_id, f"WebSocket: {e}")
+            finally:
+                if dm is not None:
+                    try:
+                        await dm.disconnect()
+                    except Exception:
+                        pass
+            if not self._running:
+                break
+            await asyncio.sleep(5)
 
-            popularity = info.get("popularity", {})
-            watched = info.get("watched_show", {})
-            like_info = info.get("like_info_v3", {})
-
-            watched_num = watched.get("num")
-            total_likes = like_info.get("total_likes", 0)
-
-            # 写 CSV（带失败追踪，连续 5 次失败则日志+飞书提醒一次）
-            if write_row(self.output, self.room_id, popularity, watched, like_info,
-                         self.live_start_time, audience_count):
-                self._write_fail_count = 0
-                self._write_blocked_notified = False
-            else:
-                self._write_fail_count += 1
-                if self._write_fail_count >= 5:
-                    msg = f"CSV 写入持续失败，请检查文件是否被其他程序打开 ({self.output})"
-                    if self.on_error:
-                        self.on_error(self.room_id, msg)
-                    if not self._write_blocked_notified and self.on_write_blocked:
-                        self.on_write_blocked(self.room_id)
-                        self._write_blocked_notified = True
-
-            # 数据回调
-            data = {
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "popularity": popularity.get("popularity"),
-                "popularity_text": popularity.get("popularity_text", "N/A"),
-                "watched_num": watched_num,
-                "watched_text": watched.get("text_large", "N/A"),
-                "likes": total_likes,
-                "audience_count": audience_count,
-                "is_live": is_live,
-                "live_start_time": self.live_start_time,
+    def _on_ws_watched(self, callback_info):
+        """WS WATCHED_CHANGE 回调：更新真实看过人数"""
+        inner_data = callback_info.get("data", {}).get("data", {})
+        num = inner_data.get("num")
+        if num is not None:
+            self._ws_watched = {
+                "num": num,
+                "text_large": inner_data.get("text_large", ""),
+                "text_small": inner_data.get("text_small", ""),
             }
-            if self.on_data:
-                self.on_data(self.room_id, data)
-
-            # 追加当前会话 Buffer
-            self.buffer.append(data)
-
-            # 变化检测
-            if self._last_watched is not None and watched_num != self._last_watched:
-                if self.on_change:
-                    self.on_change(self.room_id, "watched", self._last_watched,
-                                   watched_num, watched_num - self._last_watched)
-            if self._last_likes is not None and total_likes != self._last_likes:
-                if self.on_change:
-                    self.on_change(self.room_id, "likes", self._last_likes,
-                                   total_likes, total_likes - self._last_likes)
-
-            self._last_watched = watched_num
-            self._last_likes = total_likes
-            self._last_audience = audience_count
-            if audience_count and audience_count > self._max_audience:
-                self._max_audience = audience_count
-            if total_likes and total_likes > self._max_likes:
-                self._max_likes = total_likes
-
-            # 可中断的 sleep：每秒检查一次 _running，响应停止指令
-            for _ in range(self.interval):
-                if not self._running:
-                    return
-                await asyncio.sleep(1)
 
     def stop(self):
         self._running = False

@@ -15,7 +15,7 @@ os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 from bilibili_api import live, Credential
 
 OFFLINE_TIMEOUT = 300  # 下播后 5 分钟仍未开播则退出
-MAX_ROOMS = 10           # 同时监控房间数上限
+MAX_ROOMS = 20           # 同时监控房间数上限
 STARTUP_JITTER = 2      # 多房间启动时的随机错峰上限(秒)
 WS_BACKOFF_BASE = 5      # WS 重连初始等待(秒)
 WS_BACKOFF_MAX = 60      # WS 重连最大等待(秒)

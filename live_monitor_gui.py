@@ -20,7 +20,7 @@ os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 from bilibili_api import Credential
 
 from live_monitor_core import LiveMonitor, resolve_output_path, get_room_brief, record_session, MAX_ROOMS
-from live_monitor_notify import notify_start, notify_stop, notify_add_room
+from live_monitor_notify import notify_start, notify_stop, notify_add_room, notify_remove_room
 
 import matplotlib
 matplotlib.use('TkAgg')
@@ -150,6 +150,8 @@ class LiveMonitorGUI:
         self.room_names = {}      # room_id -> anchor_name
         self.room_live_start = {} # room_id -> live_start_time
         self.room_ids = []        # ordered list of active room IDs
+        self._mgmt_rows = {}      # room_id -> mgmt tab row widgets
+        self._mgmt_rows_frame = None
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._build_ui()
@@ -158,6 +160,7 @@ class LiveMonitorGUI:
         self.room_entry.bind("<FocusOut>", lambda e: self._save_config())
         self.interval_entry.bind("<FocusOut>", lambda e: self._save_config())
         self.oe.bind("<FocusOut>", lambda e: self._save_config())
+        self.operator_entry.bind("<FocusOut>", lambda e: self._save_config())
         self.webhook_entry.bind("<FocusOut>", lambda e: self._save_config())
         self._poll_queue()
 
@@ -169,7 +172,7 @@ class LiveMonitorGUI:
         tf.pack(fill="x", padx=25, pady=(18, 6))
         tk.Label(tf, text="B站直播数据监控", font=UI_FONT_TITLE,
                  fg=COLORS["primary_dark"], bg=COLORS["bg"]).pack(anchor="w")
-        tk.Label(tf, text="实时采集人气 / 看过人数 / 点赞数，流式写入 CSV · 上限 10 个房间",
+        tk.Label(tf, text="实时采集人气 / 看过人数 / 点赞数，流式写入 CSV · 上限 20 个房间",
                  font=UI_FONT_SMALL, fg=COLORS["text_light"],
                  bg=COLORS["bg"]).pack(anchor="w")
 
@@ -217,6 +220,15 @@ class LiveMonitorGUI:
         # 行2: Webhook + 按钮
         r2 = tk.Frame(sf, bg=COLORS["card"])
         r2.pack(fill="x", padx=15, pady=(2, 12))
+        tk.Label(r2, text="监测人", font=UI_FONT_BOLD,
+                 fg=COLORS["text"], bg=COLORS["card"]).pack(side="left")
+        self.operator_var = tk.StringVar()
+        self.operator_entry = tk.Entry(r2, textvariable=self.operator_var, width=8,
+                      font=UI_FONT, bg=COLORS["input_bg"], fg=COLORS["text"],
+                      highlightbackground=COLORS["input_border"],
+                      highlightthickness=1, relief="flat", bd=0)
+        self.operator_entry.pack(side="left", padx=(6, 14), ipady=3)
+
         tk.Label(r2, text="飞书通知", font=UI_FONT_BOLD,
                  fg=COLORS["text"], bg=COLORS["card"]).pack(side="left")
         self.webhook_var = tk.StringVar()
@@ -300,11 +312,88 @@ class LiveMonitorGUI:
     def _show_empty_tab(self):
         for tab_id in self.notebook.tabs():
             self.notebook.forget(tab_id)
+        self._mgmt_rows = {}
+        self._mgmt_rows_frame = None
         f = tk.Frame(self.notebook, bg=COLORS["card"])
         self.notebook.add(f, text="无房间")
         tk.Label(f, text="输入直播间 ID，点击「开始监控」",
                  font=UI_FONT_HINT, fg=COLORS["text_light"],
                  bg=COLORS["card"]).pack(expand=True)
+
+    def _create_mgmt_tab(self):
+        """房间管理 Tab：集中展示所有房间状态，支持单独停止"""
+        f = tk.Frame(self.notebook, bg=COLORS["card"])
+        self.notebook.insert(0, f, text="房间管理")
+
+        header = tk.Frame(f, bg=COLORS["card"])
+        header.pack(fill="x", padx=10, pady=(10, 4))
+        for text, w in [("房间", 18), ("状态", 8), ("看过", 8), ("点赞", 8), ("观众", 8)]:
+            tk.Label(header, text=text, font=UI_FONT_BOLD, width=w, anchor="w",
+                     fg=COLORS["brown_dark"], bg=COLORS["card"]).pack(side="left")
+
+        outer = tk.Frame(f, bg=COLORS["card"])
+        outer.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        mgmt_canvas = tk.Canvas(outer, bg=COLORS["card"], highlightthickness=0)
+        mgmt_canvas.pack(side="left", fill="both", expand=True)
+        sb = tk.Scrollbar(outer, orient="vertical", command=mgmt_canvas.yview)
+        sb.pack(side="right", fill="y")
+        mgmt_canvas.configure(yscrollcommand=sb.set)
+
+        rows_frame = tk.Frame(mgmt_canvas, bg=COLORS["card"])
+        mgmt_canvas.create_window((0, 0), window=rows_frame, anchor="nw")
+        rows_frame.bind("<Configure>",
+                         lambda e: mgmt_canvas.configure(scrollregion=mgmt_canvas.bbox("all")))
+
+        self._mgmt_rows_frame = rows_frame
+        self._mgmt_rows = {}
+
+    def _add_mgmt_row(self, room_id: int):
+        if self._mgmt_rows_frame is None:
+            return
+        name = self.room_names.get(room_id, f"房间{room_id}")
+        row = tk.Frame(self._mgmt_rows_frame, bg=COLORS["card"])
+        row.pack(fill="x", pady=2)
+
+        name_label = tk.Label(row, text=f"{name}（{room_id}）", font=UI_FONT, width=18,
+                              anchor="w", fg=COLORS["text"], bg=COLORS["card"])
+        name_label.pack(side="left")
+        status_label = tk.Label(row, text="直播中", font=UI_FONT, width=8, anchor="w",
+                                fg=COLORS["primary_dark"], bg=COLORS["card"])
+        status_label.pack(side="left")
+        watched_label = tk.Label(row, text="-", font=UI_FONT, width=8, anchor="w",
+                                 fg=COLORS["text"], bg=COLORS["card"])
+        watched_label.pack(side="left")
+        likes_label = tk.Label(row, text="-", font=UI_FONT, width=8, anchor="w",
+                               fg=COLORS["text"], bg=COLORS["card"])
+        likes_label.pack(side="left")
+        audience_label = tk.Label(row, text="-", font=UI_FONT, width=8, anchor="w",
+                                  fg=COLORS["text"], bg=COLORS["card"])
+        audience_label.pack(side="left")
+        stop_btn = ACButton(row, text="停止", color=COLORS["danger"], width=70, height=28,
+                            font_size=10,
+                            command=lambda rid=room_id: self._confirm_remove_room(rid))
+        stop_btn.pack(side="left", padx=(6, 0))
+
+        self._mgmt_rows[room_id] = {
+            "frame": row, "name_label": name_label, "status_label": status_label,
+            "watched_label": watched_label, "likes_label": likes_label,
+            "audience_label": audience_label, "stop_btn": stop_btn,
+        }
+
+    def _remove_mgmt_row(self, room_id: int):
+        row = self._mgmt_rows.pop(room_id, None)
+        if row:
+            row["frame"].destroy()
+
+    def _confirm_remove_room(self, room_id: int):
+        name = self.room_names.get(room_id, f"房间{room_id}")
+        if len(self.room_ids) <= 1:
+            hint = "\n（这是最后一个房间，停止后将结束本次监控）"
+        else:
+            hint = "\n（其他房间不受影响）"
+        if messagebox.askyesno("确认停止", f"确定要停止监控 {name}（{room_id}）吗？{hint}",
+                               parent=self.root):
+            self._remove_room(room_id, reason="manual")
 
     def _create_room_tab(self, room_id: int):
         """为一个房间创建图表 Tab"""
@@ -445,9 +534,11 @@ class LiveMonitorGUI:
         self._tab_data = {}
         self._active_count = len(room_ids)
 
-        # 创建所有 Tab
+        # 创建管理 Tab + 所有房间 Tab
+        self._create_mgmt_tab()
         for rid in room_ids:
             self._create_room_tab(rid)
+            self._add_mgmt_row(rid)
 
         self.running = True
         self._set_inputs_enabled(False)
@@ -495,7 +586,8 @@ class LiveMonitorGUI:
         self.started_at = datetime.now()
         room_info = [(rid, self.room_names.get(rid, ''),
                       self.room_live_start.get(rid, '')) for rid in room_ids]
-        notify_start(self.webhook_var.get().strip(), room_info, interval, output)
+        notify_start(self.webhook_var.get().strip(), room_info, interval, output,
+                    operator=self.operator_var.get().strip())
 
     def _stop(self, reason="manual"):
         if not self.running:
@@ -503,8 +595,6 @@ class LiveMonitorGUI:
         webhook = self.webhook_var.get().strip()
         stopped_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         started_ts = self.started_at.strftime("%Y-%m-%d %H:%M:%S") if self.started_at else ""
-
-        self._log(f"[调试] _stop called, reason={reason}, started_at={bool(self.started_at)}, webhook={bool(webhook)}, rooms={len(self.room_ids)}, monitors={len(self.monitors)}")
 
         if self.started_at:
             room_info = [(rid, self.room_names.get(rid, ''),
@@ -518,14 +608,11 @@ class LiveMonitorGUI:
                              started_ts, stopped_at, reason,
                              m._last_watched, m._max_likes,
                              self.room_live_start.get(rid, ''))
-            self._log(f"[调试] 正在发送停止播报, webhook={webhook[:30]}...")
             try:
-                notify_stop(webhook, room_info, self.started_at, final_stats)
-                self._log(f"[调试] 停止播报发送完成")
+                notify_stop(webhook, room_info, self.started_at, final_stats,
+                           operator=self.operator_var.get().strip())
             except Exception as e:
-                self._log(f"[调试] 停止播报异常: {e}", "offline")
-        else:
-            self._log(f"[调试] 跳过停止播报: started_at 为空")
+                self._log(f"停止播报发送失败: {e}", "offline")
 
         self._log("正在停止监控...")
         for m in self.monitors.values():
@@ -562,6 +649,7 @@ class LiveMonitorGUI:
 
         self.room_ids.append(new_id)
         self._create_room_tab(new_id)
+        self._add_mgmt_row(new_id)
 
         output = self.output_var.get().strip() or "./data/"
         interval = int(self.interval_var.get())
@@ -596,7 +684,58 @@ class LiveMonitorGUI:
         # 飞书通知
         notify_add_room(self.webhook_var.get().strip(), new_id,
                         self.room_names.get(new_id, ""),
-                        self.room_live_start.get(new_id, ""))
+                        self.room_live_start.get(new_id, ""),
+                        operator=self.operator_var.get().strip())
+
+    def _remove_room(self, room_id: int, reason="manual"):
+        """停止单个房间的监控，不影响其他房间"""
+        if room_id not in self.monitors:
+            return
+
+        # 只剩最后一个房间时，等价于全部停止
+        if len(self.room_ids) <= 1:
+            self._stop(reason=reason)
+            return
+
+        m = self.monitors[room_id]
+        m.stop()
+
+        stats = {"watched": m._last_watched, "likes": m._last_likes,
+                 "audience": m._max_audience}
+        if self.started_at:
+            out_dir = os.path.dirname(m.output) or "."
+            record_session(out_dir, room_id, self.room_names.get(room_id, ''),
+                         self.started_at.strftime("%Y-%m-%d %H:%M:%S"),
+                         datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                         reason, m._last_watched, m._max_likes,
+                         self.room_live_start.get(room_id, ''))
+
+        # 从当前监控集合中移除；_active_count 由该 monitor 协程退出后的
+        # monitor_done 消息统一递减，此处不重复扣减，避免双重计数
+        del self.monitors[room_id]
+        self.room_ids = [r for r in self.room_ids if r != room_id]
+
+        # 移除该房间的图表 Tab
+        td = self._tab_data.pop(room_id, None)
+        if td:
+            for tab_id in self.notebook.tabs():
+                if self.notebook.nametowidget(tab_id) is td["frame"]:
+                    self.notebook.forget(tab_id)
+                    break
+
+        self._remove_mgmt_row(room_id)
+
+        name = self.room_names.get(room_id, str(room_id))
+        self._log(f"[-] 已停止监控房间 {name}（{room_id}）", "offline")
+        self.room_count_label.config(
+            text=f"房间: {len(self.room_ids)}  |  间隔: {self.interval_var.get()}s")
+
+        try:
+            notify_remove_room(self.webhook_var.get().strip(), room_id, name,
+                               reason=reason, stats=stats,
+                               operator=self.operator_var.get().strip())
+        except Exception as e:
+            self._log(f"停止播报发送失败: {e}", "offline")
 
     def _run_async_loop(self):
         loop = asyncio.new_event_loop()
@@ -697,6 +836,16 @@ class LiveMonitorGUI:
                         elif not data.get("is_live"):
                             td["live_start_label"].config(text="已下播")
 
+                    # 更新房间管理 Tab
+                    mrow = self._mgmt_rows.get(room_id)
+                    if mrow:
+                        mrow["watched_label"].config(text=data.get("watched_num", "-"))
+                        mrow["likes_label"].config(text=data.get("likes", "-"))
+                        mrow["audience_label"].config(text=data.get("audience_count", "-"))
+                        mrow["status_label"].config(
+                            text="直播中" if data.get("is_live") else "已下播",
+                            fg=COLORS["primary_dark"] if data.get("is_live") else COLORS["danger"])
+
                 elif msg_type == "chart_update":
                     room_id = payload
                     td = self._tab_data.get(room_id)
@@ -787,16 +936,7 @@ class LiveMonitorGUI:
                 elif msg_type == "offline_end":
                     room_id = payload
                     self._log(f"[房间{room_id}] 下播超过 5 分钟，停止监控", "offline")
-                    # 记录 session
-                    m = self.monitors.get(room_id)
-                    if m and self.started_at:
-                        out_dir = os.path.dirname(m.output) or "."
-                        record_session(out_dir, room_id,
-                                     self.room_names.get(room_id, ''),
-                                     self.started_at.strftime("%Y-%m-%d %H:%M:%S"),
-                                     datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                     "offline", m._last_watched, m._max_likes,
-                                     self.room_live_start.get(room_id, ''))
+                    self.root.after(0, lambda rid=room_id: self._remove_room(rid, reason="offline"))
 
                 elif msg_type == "relive":
                     room_id = payload
@@ -812,6 +952,9 @@ class LiveMonitorGUI:
                     for tab_id in self.notebook.tabs():
                         if self.notebook.tab(tab_id, "text") == f"房间{room_id}":
                             self.notebook.tab(tab_id, text=f"{name}")
+                    mrow = self._mgmt_rows.get(room_id)
+                    if mrow:
+                        mrow["name_label"].config(text=f"{name}（{room_id}）")
                     self._log(f"[房间{room_id}] 主播: {name}")
 
                 elif msg_type == "write_blocked":
@@ -856,6 +999,7 @@ class LiveMonitorGUI:
             self.room_entry.insert(0, cfg.get("rooms", "13308358"))
             self.output_var.set(cfg.get("output", "./data/"))
             self.webhook_var.set(cfg.get("webhook", ""))
+            self.operator_var.set(cfg.get("operator", ""))
             self.interval_var.set(str(cfg.get("interval", 60)))
         except Exception:
             pass
@@ -866,6 +1010,7 @@ class LiveMonitorGUI:
                 "rooms": self.room_entry.get().strip(),
                 "output": self.output_var.get().strip(),
                 "webhook": self.webhook_var.get().strip(),
+                "operator": self.operator_var.get().strip(),
                 "interval": self.interval_var.get().strip(),
             }
             with open(self.CONFIG_FILE, "w") as f:
@@ -895,6 +1040,7 @@ class LiveMonitorGUI:
         self.room_entry.configure(state=state)
         self.oe.configure(state=state)
         self.interval_entry.configure(state=state)
+        self.operator_entry.configure(state=state)
         self.webhook_entry.configure(state=state)
 
     def _log(self, msg, tag=None):

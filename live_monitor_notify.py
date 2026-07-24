@@ -44,7 +44,12 @@ def _duration_str(seconds: int) -> str:
     return f"{m}分{s}秒"
 
 
-def notify_start(webhook_url: str, room_info: list, interval: int, output: str):
+def _operator_line(operator: str) -> list:
+    return [f"**监测人：** {operator}"] if operator else []
+
+
+def notify_start(webhook_url: str, room_info: list, interval: int, output: str,
+                 operator: str = ""):
     """监控启动播报  room_info: [(room_id, anchor_name, live_start), ...]"""
     if not webhook_url:
         return
@@ -67,6 +72,7 @@ def notify_start(webhook_url: str, room_info: list, interval: int, output: str):
         header_text="📊 直播监控已启动",
         header_color="green",
         content_lines=[
+            *_operator_line(operator),
             f"**监控房间：**\n{room_str}",
             f"**轮询间隔：** {interval}s",
             f"**保存路径：** {output}",
@@ -75,7 +81,7 @@ def notify_start(webhook_url: str, room_info: list, interval: int, output: str):
 
 
 def notify_stop(webhook_url: str, room_info: list, started_at: datetime,
-                stats: dict = None):
+                stats: dict = None, operator: str = ""):
     """监控停止播报"""
     if not webhook_url:
         return
@@ -99,13 +105,14 @@ def notify_stop(webhook_url: str, room_info: list, started_at: datetime,
         header_text="⏹ 直播监控已停止",
         header_color="red",
         content_lines=[
+            *_operator_line(operator),
             f"**运行时长：** {dur_str}",
             f"**监控结果：**\n{room_str}",
         ])
 
 
 def notify_add_room(webhook_url: str, room_id: int, anchor_name: str = "",
-                    live_start: str = ""):
+                    live_start: str = "", operator: str = ""):
     """动态添加房间播报"""
     if not webhook_url:
         return
@@ -125,6 +132,30 @@ def notify_add_room(webhook_url: str, room_id: int, anchor_name: str = "",
         header_text="➕ 已添加监控房间",
         header_color="blue",
         content_lines=[
+            *_operator_line(operator),
             f"**房间：** {label}（{room_id}）{extra}",
             f"**添加时间：** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        ])
+
+
+def notify_remove_room(webhook_url: str, room_id: int, anchor_name: str = "",
+                       reason: str = "manual", stats: dict = None,
+                       operator: str = ""):
+    """单独停止某个房间播报（不影响其他房间继续监控）"""
+    if not webhook_url:
+        return
+    label = anchor_name or f"房间 {room_id}"
+    stats = stats or {}
+    w = stats.get('watched', 'N/A')
+    a = stats.get('audience', 'N/A')
+    audience_part = f"｜观众 **{a}**" if a != 'N/A' else ""
+    reason_text = "下播超时自动退出" if reason == "offline" else "手动停止"
+    _send_card(webhook_url,
+        header_text="⏹ 已停止监控房间",
+        header_color="orange",
+        content_lines=[
+            *_operator_line(operator),
+            f"**房间：** {label}（{room_id}）｜看过 **{w}**{audience_part}",
+            f"**原因：** {reason_text}",
+            f"**停止时间：** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         ])

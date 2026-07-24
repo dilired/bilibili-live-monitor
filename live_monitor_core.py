@@ -3,6 +3,7 @@
 import asyncio
 import csv
 import os
+import random
 import re
 from datetime import datetime
 
@@ -15,6 +16,10 @@ from bilibili_api import live, Credential
 
 OFFLINE_TIMEOUT = 300  # 下播后 5 分钟仍未开播则退出
 MAX_ROOMS = 10           # 同时监控房间数上限
+STARTUP_JITTER = 2      # 多房间启动时的随机错峰上限(秒)
+WS_BACKOFF_BASE = 5      # WS 重连初始等待(秒)
+WS_BACKOFF_MAX = 60      # WS 重连最大等待(秒)
+WS_STABLE_AFTER = 30     # 连接稳定运行超过该时长(秒)才重置退避
 
 
 def record_session(output_dir: str, room_id: int, anchor_name: str,
@@ -160,6 +165,9 @@ class LiveMonitor:
         """异步轮询循环（HTTP）+ WebSocket 看过人数修正"""
         room = live.LiveRoom(room_display_id=self.room_id, credential=self.credential)
         self._running = True
+
+        # 多房间同时启动时随机错峰，避免请求同时打到接口
+        await asyncio.sleep(random.uniform(0, STARTUP_JITTER))
 
         # 首次获取主播名，更新 CSV 文件名
         try:
@@ -326,15 +334,18 @@ class LiveMonitor:
                 pass
 
     async def _run_ws(self):
-        """WebSocket 连接管理：持续接收 WATCHED_CHANGE，断线自动重连"""
+        """WebSocket 连接管理：持续接收 WATCHED_CHANGE，断线自动重连（指数退避）"""
+        backoff = WS_BACKOFF_BASE
         while self._running:
             dm = None
+            connected_at = None
             try:
                 dm = live.LiveDanmaku(
                     room_display_id=self.room_id,
                     credential=self.credential,
                 )
                 dm.add_event_listener("WATCHED_CHANGE", self._on_ws_watched)
+                connected_at = datetime.now()
                 await dm.connect()
             except Exception as e:
                 if self._running and self.on_error:
@@ -347,7 +358,14 @@ class LiveMonitor:
                         pass
             if not self._running:
                 break
-            await asyncio.sleep(5)
+
+            # 连接稳定运行过一段时间后重置退避，避免长期运行后一次抖动就退避到底
+            if connected_at and (datetime.now() - connected_at).total_seconds() >= WS_STABLE_AFTER:
+                backoff = WS_BACKOFF_BASE
+
+            wait = backoff + random.uniform(0, backoff * 0.3)
+            await asyncio.sleep(wait)
+            backoff = min(backoff * 2, WS_BACKOFF_MAX)
 
     def _on_ws_watched(self, callback_info):
         """WS WATCHED_CHANGE 回调：更新真实看过人数"""

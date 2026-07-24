@@ -5,7 +5,7 @@ echo === B站直播数据监控 - Windows 打包 ===
 echo.
 
 echo 安装依赖...
-pip install bilibili-api-python aiohttp certifi matplotlib pyinstaller
+pip install -r requirements.txt -r requirements-build.txt
 
 echo.
 echo 开始打包...

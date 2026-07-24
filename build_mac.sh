@@ -10,8 +10,8 @@ PYTHON=$(which python3.12 2>/dev/null || which python3)
 echo "Python: $PYTHON ($($PYTHON --version))"
 
 echo "安装依赖..."
-$PYTHON -m pip install --break-system-packages bilibili-api-python aiohttp certifi matplotlib pyinstaller 2>/dev/null || \
-$PYTHON -m pip install bilibili-api-python aiohttp certifi matplotlib pyinstaller
+$PYTHON -m pip install --break-system-packages -r requirements.txt -r requirements-build.txt 2>/dev/null || \
+$PYTHON -m pip install -r requirements.txt -r requirements-build.txt
 
 echo "开始打包..."
 $PYTHON -m PyInstaller \

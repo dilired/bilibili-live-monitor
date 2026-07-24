@@ -13,7 +13,23 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run tests
+        run: pytest tests/ -v
+
   build-mac:
+    needs: test
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,7 +41,7 @@ jobs:
       - name: Install dependencies
         run: |
           brew install python-tk@3.12
-          pip install bilibili-api-python aiohttp certifi matplotlib pyinstaller
+          pip install -r requirements.txt -r requirements-build.txt
 
       - name: Build
         run: |
@@ -56,6 +72,7 @@ jobs:
           path: dist/BiliLiveMonitor-mac.zip
 
   build-windows:
+    needs: test
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -65,7 +82,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install bilibili-api-python aiohttp certifi matplotlib pyinstaller
+        run: pip install -r requirements.txt -r requirements-build.txt
 
       - name: Build
         run: |

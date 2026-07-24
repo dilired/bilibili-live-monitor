@@ -1,1 +1,5 @@
-bilibili-api-python>=17.0.0
+bilibili-api-python==17.4.1
+aiohttp==3.13.1
+certifi==2024.2.2
+matplotlib==3.9.4
+numpy==2.0.2

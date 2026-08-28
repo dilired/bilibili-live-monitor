@@ -5,6 +5,7 @@ import csv
 import os
 import random
 import re
+import sys
 from datetime import datetime
 
 # PyInstaller 打包后 SSL 证书需显式指定
@@ -14,12 +15,35 @@ os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 
 from bilibili_api import live, Credential
 
+
+def _debug_log_path() -> str:
+    if sys.platform == "darwin":
+        base = os.path.expanduser("~/Library/Application Support/BiliLiveMonitor")
+    elif sys.platform == "win32":
+        base = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "BiliLiveMonitor")
+    else:
+        base = os.path.expanduser("~/.bililivemonitor")
+    os.makedirs(base, exist_ok=True)
+    return os.path.join(base, "debug.log")
+
+
+def debug_log(msg: str):
+    """轻量文件日志：定位卡死等 GUI 窗口内看不到、也不会抛异常的问题（GUI 为 windowed 打包，stderr 会被丢弃）"""
+    try:
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(_debug_log_path(), "a", encoding="utf-8") as f:
+            f.write(f"[{ts}] {msg}\n")
+    except Exception:
+        pass
+
 OFFLINE_TIMEOUT = 300  # 下播后 5 分钟仍未开播则退出
 MAX_ROOMS = 20           # 同时监控房间数上限
 STARTUP_JITTER = 2      # 多房间启动时的随机错峰上限(秒)
 WS_BACKOFF_BASE = 5      # WS 重连初始等待(秒)
 WS_BACKOFF_MAX = 60      # WS 重连最大等待(秒)
 WS_STABLE_AFTER = 30     # 连接稳定运行超过该时长(秒)才重置退避
+HTTP_TIMEOUT = 20        # HTTP 请求硬超时(秒)：aiohttp 的 ClientTimeout 不覆盖 DNS 解析阶段，
+                         # 部分设备 DNS/网络异常时请求会无限挂起且不报错，靠这层兜底
 
 
 def record_session(output_dir: str, room_id: int, anchor_name: str,
@@ -64,9 +88,9 @@ async def get_anchor_name(room_id: int) -> str:
 
 
 async def get_room_brief(room_id: int) -> tuple:
-    """获取主播名和开播时间"""
+    """获取主播名和开播时间（GUI 在主线程调用，需硬超时防止 DNS 挂起卡死整个窗口）"""
     room = live.LiveRoom(room_display_id=room_id)
-    info = await room.get_room_info()
+    info = await asyncio.wait_for(room.get_room_info(), timeout=HTTP_TIMEOUT)
     name = info.get('anchor_info', {}).get('base_info', {}).get('uname', '')
     live_ts = info.get('room_info', {}).get('live_start_time', 0)
     live_start = datetime.fromtimestamp(live_ts).strftime("%Y-%m-%d %H:%M:%S") if live_ts else ""
@@ -163,6 +187,7 @@ class LiveMonitor:
 
     async def run(self):
         """异步轮询循环（HTTP）+ WebSocket 看过人数修正"""
+        debug_log(f"[room {self.room_id}] run() 启动")
         room = live.LiveRoom(room_display_id=self.room_id, credential=self.credential)
         self._running = True
 
@@ -170,8 +195,12 @@ class LiveMonitor:
         await asyncio.sleep(random.uniform(0, STARTUP_JITTER))
 
         # 首次获取主播名，更新 CSV 文件名
+        # 加硬超时: aiohttp 的 ClientTimeout 不覆盖 DNS 解析阶段，部分设备网络异常时
+        # get_room_info() 会无限挂起且不抛异常，导致后续流程全部卡死
         try:
-            info = await room.get_room_info()
+            debug_log(f"[room {self.room_id}] 首次 get_room_info 开始")
+            info = await asyncio.wait_for(room.get_room_info(), timeout=HTTP_TIMEOUT)
+            debug_log(f"[room {self.room_id}] 首次 get_room_info 成功")
             uname = info.get('anchor_info', {}).get('base_info', {}).get('uname', '')
             if uname:
                 self.anchor_name = uname
@@ -180,8 +209,8 @@ class LiveMonitor:
                 self.output = os.path.join(output_dir, f"live_{self.room_id}_{safe_name}_v2.csv")
                 if self.on_name:
                     self.on_name(self.room_id, uname)
-        except Exception:
-            pass
+        except Exception as e:
+            debug_log(f"[room {self.room_id}] 首次 get_room_info 失败: {e!r}")
 
         ensure_csv(self.output)
 
@@ -197,9 +226,10 @@ class LiveMonitor:
         try:
             while self._running:
                 try:
-                    info = await room.get_room_info()
+                    info = await asyncio.wait_for(room.get_room_info(), timeout=HTTP_TIMEOUT)
                 except Exception as e:
                     self._error_count += 1
+                    debug_log(f"[room {self.room_id}] 轮询 get_room_info 失败: {e!r}")
                     now = datetime.now()
                     if self._last_error_time is None or \
                        (now - self._last_error_time).total_seconds() >= 30:

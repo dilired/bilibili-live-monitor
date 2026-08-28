@@ -19,7 +19,7 @@ os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 
 from bilibili_api import Credential
 
-from live_monitor_core import LiveMonitor, resolve_output_path, get_room_brief, record_session, MAX_ROOMS
+from live_monitor_core import LiveMonitor, resolve_output_path, get_room_brief, record_session, MAX_ROOMS, debug_log
 from live_monitor_notify import notify_start, notify_stop, notify_add_room, notify_remove_room
 
 import matplotlib
@@ -556,13 +556,15 @@ class LiveMonitorGUI:
         self.room_live_start = {}  # room_id -> live_start_time str
         for rid in room_ids:
             try:
+                debug_log(f"[room {rid}] GUI 主线程预取 get_room_brief 开始")
                 name, live_start = asyncio.run(get_room_brief(rid))
+                debug_log(f"[room {rid}] GUI 主线程预取 get_room_brief 成功")
                 if name:
                     self.room_names[rid] = name
                 if live_start:
                     self.room_live_start[rid] = live_start
-            except Exception:
-                pass
+            except Exception as e:
+                debug_log(f"[room {rid}] GUI 主线程预取 get_room_brief 失败: {e!r}")
 
         multi = len(room_ids) > 1
         for rid in room_ids:
@@ -672,11 +674,13 @@ class LiveMonitorGUI:
 
         # 获取主播名和开播时间用于飞书通知
         try:
+            debug_log(f"[room {new_id}] GUI 主线程预取 get_room_brief 开始（动态添加）")
             aname, live_start = asyncio.run(get_room_brief(new_id))
+            debug_log(f"[room {new_id}] GUI 主线程预取 get_room_brief 成功（动态添加）")
             if aname:
                 self.room_names[new_id] = aname
-        except Exception:
-            pass
+        except Exception as e:
+            debug_log(f"[room {new_id}] GUI 主线程预取 get_room_brief 失败（动态添加）: {e!r}")
 
         self._log(f"[+] 动态添加房间 {new_id}")
         self.room_count_label.config(text=f"房间: {len(self.room_ids)}  |  间隔: {interval}s")
